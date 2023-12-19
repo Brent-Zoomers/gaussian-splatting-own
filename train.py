@@ -92,6 +92,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         loss.backward()
 
+        # Add average size of gaussian as regularization
+        scalings = gaussians.get_scaling
+        loss += torch.mean((torch.norm(scalings, dim=1) / scalings.size()[0])) * 10_000
+
+
         iter_end.record()
 
         with torch.no_grad():

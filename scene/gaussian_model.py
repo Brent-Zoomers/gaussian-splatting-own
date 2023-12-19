@@ -56,6 +56,15 @@ class GaussianModel:
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+
+        #
+        self._xyz_old = torch.empty(0).cuda()
+        self._features_dc_old = torch.empty(0).cuda()
+        self._features_rest_old = torch.empty(0).cuda()
+        self._scaling_old = torch.empty(0).cuda()
+        self._rotation_old = torch.empty(0).cuda()
+        self._opacity_old = torch.empty(0).cuda()
+        #
         self.setup_functions()
 
     def capture(self):
@@ -94,26 +103,45 @@ class GaussianModel:
 
     @property
     def get_scaling(self):
-        return self.scaling_activation(self._scaling)
+        return self.scaling_activation(torch.cat((self._scaling_old, self._scaling)))
     
     @property
     def get_rotation(self):
-        return self.rotation_activation(self._rotation)
+        return self.rotation_activation(torch.cat((self._rotation_old , self._rotation)))
     
     @property
     def get_xyz(self):
-        return self._xyz
+        return torch.cat((self._xyz_old, self._xyz))
     
     @property
     def get_features(self):
-        features_dc = self._features_dc
-        features_rest = self._features_rest
+        features_dc = torch.cat((self._features_dc_old, self._features_dc))
+        features_rest = torch.cat((self._features_rest_old, self._features_rest))
         return torch.cat((features_dc, features_rest), dim=1)
     
     @property
     def get_opacity(self):
-        return self.opacity_activation(self._opacity)
+        return self.opacity_activation(torch.cat(( self._opacity_old,  self._opacity)))
     
+    def set_old(self):
+        self._xyz_old = torch.cat((self._xyz_old, self._xyz))
+        self._features_dc_old = torch.cat((self._features_dc_old, self._features_dc))
+        self._features_rest_old = torch.cat((self._features_rest_old, self._features_rest))
+        self._scaling_old = torch.cat((self._scaling_old, self._scaling))
+        self._rotation_old = torch.cat((self._rotation_old , self._rotation))
+        self._opacity_old = torch.cat(( self._opacity_old,  self._opacity))
+
+        self._xyz = torch.empty(0).cuda()
+        self._features_dc = torch.empty(0).cuda()
+        self._features_rest = torch.empty(0).cuda()
+        self._scaling = torch.empty(0).cuda()
+        self._rotation = torch.empty(0).cuda()
+        self._opacity = torch.empty(0).cuda()
+        # self.max_radii2D = torch.empty(0).cuda()
+        # self.xyz_gradient_accum = torch.empty(0).cuda()
+        # self.denom = torch.empty(0).cuda()
+
+
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
@@ -356,15 +384,15 @@ class GaussianModel:
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
 
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
-        means =torch.zeros((stds.size(0), 3),device="cuda")
+        means = torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
-        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
-        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
-        new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
-        new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
-        new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
-        new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
+        rots = build_rotation(torch.cat((self._rotation_old, self._rotation))[selected_pts_mask]).repeat(N,1,1)
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + torch.cat((self._xyz_old, self._xyz))[selected_pts_mask].repeat(N, 1)
+        new_scaling = self.scaling_inverse_activation(torch.cat((self._scaling_old, self._scaling))[selected_pts_mask].repeat(N,1) / (0.8*N))
+        new_rotation = torch.cat((self._rotation_old, self._rotation))[selected_pts_mask].repeat(N,1)
+        new_features_dc = torch.cat((self._features_dc_old, self._features_dc))[selected_pts_mask].repeat(N,1,1)
+        new_features_rest = torch.cat((self._features_rest_old, self._features_rest))[selected_pts_mask].repeat(N,1,1)
+        new_opacity = torch.cat((self._opacity_old, self._opacity))[selected_pts_mask].repeat(N,1)
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
 
@@ -375,14 +403,14 @@ class GaussianModel:
         # Extract points that satisfy the gradient condition
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+                                              torch.max(torch.cat((self._scaling_old, self._scaling)), dim=1).values <= self.percent_dense*scene_extent)
         
-        new_xyz = self._xyz[selected_pts_mask]
-        new_features_dc = self._features_dc[selected_pts_mask]
-        new_features_rest = self._features_rest[selected_pts_mask]
-        new_opacities = self._opacity[selected_pts_mask]
-        new_scaling = self._scaling[selected_pts_mask]
-        new_rotation = self._rotation[selected_pts_mask]
+        new_xyz = torch.cat((self._xyz_old, self._xyz))[selected_pts_mask]
+        new_features_dc = torch.cat((self._features_dc_old, self._features_dc))[selected_pts_mask]
+        new_features_rest = torch.cat((self._features_rest_old, self._features_rest))[selected_pts_mask]
+        new_opacities = torch.cat((self._opacity_old, self._opacity))[selected_pts_mask]
+        new_scaling = torch.cat((self._scaling_old, self._scaling))[selected_pts_mask]
+        new_rotation = torch.cat((self._rotation_old, self._rotation))[selected_pts_mask]
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
 

@@ -34,6 +34,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
+
+    densify_viewpoints = [50,500,5000]
+
+
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -130,6 +134,30 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
+
+            # Look for areas which get reconstructed poorly.
+            
+            # Render to each viewpoint and look for PSNR below threshold
+            
+            if (iteration in densify_viewpoints):
+                for camera in viewpoint_stack:
+                    render_pkg = render(camera, gaussians, pipe, bg)
+                    image, _,_,_ = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+
+                    # Loss
+                    gt_image = camera.original_image.cuda()
+
+                    # Calculate element-wise PSNR and create binary mask
+                    diff = image-gt_image
+
+                    
+                    
+
+
+                
+            # Create crop from in-between views and add camera to training list
+
 
 def prepare_output_and_logger(args):    
     if not args.model_path:

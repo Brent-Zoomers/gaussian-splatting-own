@@ -28,6 +28,9 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -35,8 +38,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
-    densify_viewpoints = [50,500,5000]
-
+    densify_viewpoints = [100,200,300,500,1000, 5000]
 
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -79,6 +81,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
+            print()
+            print(len(viewpoint_stack))
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
         # Render
@@ -141,22 +145,102 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Render to each viewpoint and look for PSNR below threshold
             
             if (iteration in densify_viewpoints):
-                for camera in viewpoint_stack:
-                    render_pkg = render(camera, gaussians, pipe, bg)
-                    image, _,_,_ = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+                scene.densifyCameras()
 
-                    # Loss
-                    gt_image = camera.original_image.cuda()
 
-                    # Calculate element-wise PSNR and create binary mask
-                    diff = image-gt_image
+                # for camera in viewpoint_stack:
+                #     render_pkg = render(camera, gaussians, pipe, bg)
+                #     image, _,_,_ = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
+                #     # Loss
+                #     gt_image = camera.original_image.cuda()
+
+                #     # Calculate element-wise PSNR and create binary mask
+                #     mse = torch.pow(image-gt_image, 2)
+                #     psnr = 20*torch.log10(torch.tensor([255.0]).cuda()) - 10*torch.log10(mse)
+
+                #     psnr /= 255.0
+
+                #     grayscale_image = torch.mean(psnr, dim=0, keepdim=True)
+                #     mask = (grayscale_image >= 0.25).float()
+
+                #     # print(psnr)
+                #     import numpy as np
+                #     import matplotlib.pyplot as plt
+                #     npimg = psnr.detach().cpu().numpy() 
+                #     plt.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='nearest')
+
+                #     npmask = mask.detach().cpu().numpy()
+                #     plt.imshow(np.transpose(npmask, (1, 2, 0)), interpolation='nearest')
+                #     plt.show()
+
+
+                #     import cv2
+                #     from sklearn.cluster import KMeans
+                #     numpy_image = (mask.detach().cpu().numpy() * 255).astype(np.uint8)
+
+                #     numpy_image = numpy_image.transpose(1,2,0)
+
+                #     # Convert NumPy array to OpenCV image (assuming the image is in RGB format)
+                #     # opencv_image = numpy_image.transpose(1, 2, 0)
+
+                #     # Perform closing operation using OpenCV
+                #     kernel_size = 10
+                #     closing_kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                #     closed_image = cv2.morphologyEx(numpy_image, cv2.MORPH_CLOSE, closing_kernel)
+
+                #     # Perform opening operation using OpenCV
+                #     opening_kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                #     opened_image = cv2.morphologyEx(closed_image, cv2.MORPH_OPEN, opening_kernel)
+                #     # opened_image = cv2.morphologyEx(opened_image, cv2.MORPH_DILATE, opening_kernel)
+                #     # opened_image = cv2.morphologyEx(closed_image, cv2.MORPH_OPEN, opening_kernel)
+                #     # Find the coordinates of the non-zero pixels in the binary image
+
+
+                #     nonzero_coords = np.column_stack(np.where(opened_image == 0))
+
+                #     # Use K-Means clustering to cluster the coordinates into 3 clusters
+                #     # MAX 7 for coloring
+                #     num_clusters = 5
+                #     kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+                #     kmeans.fit(nonzero_coords)
+
+                #     # Get the cluster labels and cluster centers
+                #     labels = kmeans.labels_
+                #     centers = kmeans.cluster_centers_
+
+                #     # Convert grayscale mask to a 3-channel image
+                #     color_mask = cv2.cvtColor(numpy_image, cv2.COLOR_GRAY2BGR)
+                #     mask = np.zeros_like(numpy_image)
+
+                #     # Draw bounding boxes around each cluster on the color image with different colors
+                #     for i in range(num_clusters):
+                #         cluster_points = nonzero_coords[labels == i]
+                #         color = tuple(np.random.randint(0, 256, 3).tolist())  # Random color for each cluster
+                #         for point in cluster_points:
+                #             cv2.circle(color_mask, (point[1], point[0]), 1, color, -1)
+                #         if len(cluster_points) > 0:
+                #             # Calculate bounding box for the cluster
+                #             y_min, x_min = np.min(cluster_points, axis=0)
+                #             y_max, x_max = np.max(cluster_points, axis=0)
+                #             x, y, w, h = int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)
+
+                #             # Draw bounding box on the color image
+                #             cv2.rectangle(color_mask, (x, y), (x + w, y + h), color, -1)
+                #             cv2.rectangle(mask, (x, y), (x + w, y + h), 255, 2)
+
+                #     # Display the results
+                #     cv2.imshow('Original Image', numpy_image)
+                #     cv2.imshow('Opened Image', opened_image)
+                #     cv2.imshow('Result Image', color_mask)
+                #     cv2.imshow('Result Image', mask)
+                #     cv2.waitKey(0)
+                #     cv2.destroyAllWindows()
                     
-                    
-
-
-                
             # Create crop from in-between views and add camera to training list
+
+
+
 
 
 def prepare_output_and_logger(args):    

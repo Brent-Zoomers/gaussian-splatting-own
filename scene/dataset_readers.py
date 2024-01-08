@@ -23,22 +23,29 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 
-class CameraInfo(NamedTuple):
-    uid: int
-    R: np.array
-    T: np.array
-    FovY: np.array
-    FovX: np.array
-    image: np.array
-    image_path: str
-    image_name: str
-    width: int
-    height: int
+class CameraInfo:
+    def __init__(self, uid, R, T, FovY, FovX, image, image_path, image_name, width, height):
+        self.uid = uid
+        self.R = R
+        self.T = T
+        self.FovY = FovY
+        self.FovX = FovX
+        self.image = image
+        self.image_path = image_path
+        self.image_name = image_name
+        self.width = width
+        self.height = height
+        
+    def load_image(self):
+        self.image = Image.open(self.image_path)
+    
+        
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
     train_cameras: list
     test_cameras: list
+    in_between_cameras:list
     nerf_normalization: dict
     ply_path: str
 
@@ -96,7 +103,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
-        image = Image.open(image_path)
+        image = None
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height)
@@ -145,12 +152,16 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
+    # Choose which ones will be used initially
+
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 1]
         test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+        in_between_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0 and idx % llffhold != 1]
     else:
-        train_cam_infos = cam_infos
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 1]
         test_cam_infos = []
+        in_between_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 1]
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
@@ -172,6 +183,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,
+                           in_between_cameras=in_between_cam_infos,
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path)
     return scene_info

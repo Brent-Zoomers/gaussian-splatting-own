@@ -48,6 +48,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    import time
+    start_time = time.time()
+
+    start_value = 0.001
+    end_value = 0.0001
+    num_steps = 6  # You can adjust the number of steps as needed
+
+    # Generate exponentially decreasing values
+    values = torch.logspace(
+        start=torch.log10(torch.tensor(start_value)),
+        end=torch.log10(torch.tensor(end_value)),
+        steps=num_steps,
+        base=10.0,
+        dtype=torch.float
+    )
+
+
     for iteration in range(first_iter, opt.iterations + 1):        
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -89,13 +106,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
+       
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        loss.backward()
+        
 
+
+        # Average size
         # Add average size of gaussian as regularization
-        scalings = gaussians.get_scaling
-        loss += torch.mean((torch.norm(scalings, dim=1) / scalings.size()[0])) * 10_000
-
+        # scalings = gaussians.get_scaling
+        # loss += 1.0/(torch.mean((torch.norm(scalings, dim=1) / scalings.size()[0])) * opt.reg_constant)
+        # loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * (1.0 / ((iteration//1000+1)*1000) )
+        loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * values[iteration/30000.0 * 6]
+        loss.backward()
+        
 
         iter_end.record()
 
@@ -112,7 +135,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
+                end_time = time.time()
+                # Calculate the total runtime
+                total_runtime = end_time - start_time
+
+                scene.save(iteration, total_runtime)
 
             # Densification
             if iteration < opt.densify_until_iter:
@@ -135,6 +162,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+                
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -206,7 +234,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[5_000,7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)

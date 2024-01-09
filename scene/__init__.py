@@ -71,6 +71,9 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
+        # Create data structure to efficiently query closest camera
+       
+
         # Decide which images will be used n load in train and test cameras
         
         for cam in self.scene_info.train_cameras:
@@ -102,12 +105,27 @@ class Scene:
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
     
-    def densifyCameras(self, scale=1.0):
+    def densifyCameras(self, scale=1.0, camera_position=(0,0,0)):
         # Pop camera(s) from in-between standpoints that are close to the badly reconstructed view
 
-        # For now -> random
-       new_cam = self.scene_info.in_between_cameras.pop(random.randint(0, len(self.scene_info.in_between_cameras) - 1))
-       new_cam.load_image()
-       self.train_cameras[scale].extend(cameraList_from_camInfos([new_cam], scale, self.args))
+        from scipy.spatial import KDTree
+
+        positions = [tuple(x.T) for x in self.scene_info.in_between_cameras]
+        cameras = [x for x in self.scene_info.in_between_cameras]
+        # positions = [tuple(x) for x in positions]
+        self.kdtree = KDTree(positions)
+        _, idx = self.kdtree.query(camera_position)
+        cameras[idx].load_image()
+        self.train_cameras[scale].extend(cameraList_from_camInfos([cameras[idx]], scale, self.args))
+        self.scene_info.in_between_cameras.remove(cameras[idx])
+
+        print(camera_position, positions[idx])
+
+
+        # # For now -> random
+        # for _ in range(10):
+        #     new_cam = self.scene_info.in_between_cameras.pop(random.randint(0, len(self.scene_info.in_between_cameras) - 1))
+        #     new_cam.load_image()
+        #     self.train_cameras[scale].extend(cameraList_from_camInfos([new_cam], scale, self.args))
 
     

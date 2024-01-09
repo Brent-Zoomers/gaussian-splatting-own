@@ -38,7 +38,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
-    densify_viewpoints = [100,200,300,500,1000, 5000]
+    densify_viewpoints = [5_000, 10_000]
 
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -49,6 +49,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
+
+    seen = {}
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -84,6 +86,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             print()
             print(len(viewpoint_stack))
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        # if viewpoint_cam.image_name not in seen:
+        #     seen[viewpoint_cam.image_name] = True
+            # print(viewpoint_cam.image_name)
 
         # Render
         if (iteration - 1) == debug_from:
@@ -145,21 +150,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Render to each viewpoint and look for PSNR below threshold
             
             if (iteration in densify_viewpoints):
-                scene.densifyCameras()
+                viewpoint_stack_ = scene.getTrainCameras().copy()
+                for camera in viewpoint_stack_:
+                    render_pkg = render(camera, gaussians, pipe, bg)
+                    image, _,_,_ = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+
+                    # Loss
+                    gt_image = camera.original_image.cuda()
+
+                    # Calculate element-wise PSNR and create binary mask
+                    epsilon = 1e-10  # A small constant to avoid division by zero
+                    mse = torch.pow(image - gt_image, 2)
+                    mse = torch.max(mse, torch.tensor([epsilon]).cuda()) 
+                    psnr = 20*torch.log10(torch.tensor([255.0]).cuda()) - 10*torch.log10(mse)
+
+                    psnr /= 255.0
 
 
-                # for camera in viewpoint_stack:
-                #     render_pkg = render(camera, gaussians, pipe, bg)
-                #     image, _,_,_ = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+                    if torch.mean(psnr) < 0.28:
 
-                #     # Loss
-                #     gt_image = camera.original_image.cuda()
-
-                #     # Calculate element-wise PSNR and create binary mask
-                #     mse = torch.pow(image-gt_image, 2)
-                #     psnr = 20*torch.log10(torch.tensor([255.0]).cuda()) - 10*torch.log10(mse)
-
-                #     psnr /= 255.0
+                        scene.densifyCameras(camera_position=camera.T)
 
                 #     grayscale_image = torch.mean(psnr, dim=0, keepdim=True)
                 #     mask = (grayscale_image >= 0.25).float()

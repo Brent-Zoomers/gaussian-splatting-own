@@ -255,6 +255,16 @@ class GaussianModel:
 
         self.active_sh_degree = self.max_sh_degree
 
+    def reset_colors(self):
+        fdc_new = torch.zeros_like(self._features_dc) + 1.0
+        optimizable_tensors = self.replace_tensor_to_optimizer(fdc_new, "f_dc")
+        self._features_dc = optimizable_tensors["f_dc"]
+
+        frest_new = torch.zeros_like(self._features_rest)
+        optimizable_tensors = self.replace_tensor_to_optimizer(fdc_new, "f_rest")
+        self._features_rest = optimizable_tensors["f_rest"]
+
+
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:

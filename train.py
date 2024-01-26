@@ -9,19 +9,46 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+# Current issues (according to me)
+"""
+Bounding box to small -> undesired results
+Threshold for when to add crop is bad/terrible
+
+
+"""
+
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, masked_1l_loss, masked_ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr
+from utils.image_utils import psnr, show_pytorch_image, pytorch2opencv
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+
+import wandb
+
+wandb.init(
+    # set the wandb project where this run will be logged
+    project="gaussian_splatting",
+    
+    # track hyperparameters and run metadata
+    config={
+    "crop_iterations": [5_000, 10_000],
+    "dataset": "truck_big",
+    "images": "images_4",
+    "epochs": 30_000,
+    "num_clusters": 3,
+    "ignore_below_surface_percentage": 0,
+    "comment": "Changed to 5k10k after seeing 15k stops adding",
+    }
+)
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -38,7 +65,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
-    densify_viewpoints = [5_000, 10_000]
+    densify_viewpoints = [5000, 10000]
+    crops_added = 0
+    skipped = 0
+    # densify_viewpoints = []
 
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -49,8 +79,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
-
-    seen = {}
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -81,6 +109,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gaussians.oneupSHdegree()
 
         # Pick a random Camera
+        # Maybe change to N random camera's as crops will each take up one iteration
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
             print()
@@ -100,10 +129,33 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        loss.backward()
+        
+        # Calculate masked loss
+
+        if torch.min(viewpoint_cam.mask) == 1.0:
+            # print("Normal Used")
+            gt_image = viewpoint_cam.original_image.cuda()
+            Ll1 = l1_loss(image, gt_image)
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            wandb.log({"num_gaussians": gaussians.get_scaling.shape[0],"loss": loss})
+            # print(loss.isnan())
+            loss.backward()
+        else:
+            print("Crop Used")
+            # calculate masked loss
+            mask = viewpoint_cam.mask.cuda()
+            gt_image = viewpoint_cam.original_image.cuda()
+            binary_mask = torch.where(mask != 0, torch.tensor(1.0).to("cuda"), torch.tensor(0.0).to("cuda"))
+            # Calculate the percentage of nonzero items
+            percentage = torch.mean(binary_mask)
+
+
+            # show_pytorch_image(mask, "mask")
+            # show_pytorch_image(gt_image, "gt_image")
+            Ll1 = masked_1l_loss(image, gt_image,mask)
+            loss = ((1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - masked_ssim(image, gt_image,mask))) * (percentage + 0.00001)
+            wandb.log({"num_gaussians": gaussians.get_scaling.shape[0],"loss": loss})
+            loss.backward()
 
         iter_end.record()
 
@@ -146,12 +198,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
 
             # Look for areas which get reconstructed poorly.
-            
+                    
             # Render to each viewpoint and look for PSNR below threshold
-            
             if (iteration in densify_viewpoints):
                 viewpoint_stack_ = scene.getTrainCameras().copy()
                 for camera in viewpoint_stack_:
+                    # break
                     render_pkg = render(camera, gaussians, pipe, bg)
                     image, _,_,_ = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
@@ -166,91 +218,103 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                     psnr /= 255.0
 
+                    # if torch.mean(psnr) < 0.28:
 
-                    if torch.mean(psnr) < 0.28:
+                        # scene.densifyCameras(camera_position=camera.T)
+                    import cv2
+                    from sklearn.cluster import KMeans
+                    import numpy as np
+                    import matplotlib.pyplot as plt
 
-                        scene.densifyCameras(camera_position=camera.T)
+                    grayscale_image = torch.mean(psnr, dim=0, keepdim=True)
+                    mask = (grayscale_image >= 0.30).float()
 
-                #     grayscale_image = torch.mean(psnr, dim=0, keepdim=True)
-                #     mask = (grayscale_image >= 0.25).float()
+                    # show_pytorch_image([mask, gt_image], ["mask", "gt_image"])
+                    
+                    numpy_image = pytorch2opencv(mask)
+                    ground_truth = pytorch2opencv(gt_image)
 
-                #     # print(psnr)
-                #     import numpy as np
-                #     import matplotlib.pyplot as plt
-                #     npimg = psnr.detach().cpu().numpy() 
-                #     plt.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='nearest')
+                    # Perform closing operation using OpenCV
+                    kernel_size = 5
+                    kernel = np.ones((kernel_size, kernel_size), np.uint8)
 
-                #     npmask = mask.detach().cpu().numpy()
-                #     plt.imshow(np.transpose(npmask, (1, 2, 0)), interpolation='nearest')
-                #     plt.show()
+                    closing = cv2.morphologyEx(numpy_image, cv2.MORPH_CLOSE, kernel)
+                    erosion = cv2.erode(closing, kernel, iterations=5)
 
+                    # cv2.imshow("mask", numpy_image)
+                    # cv2.imshow("gt", ground_truth)
+                    # cv2.imshow("morph", erosion)
+                    # cv2.waitKey() 
 
-                #     import cv2
-                #     from sklearn.cluster import KMeans
-                #     numpy_image = (mask.detach().cpu().numpy() * 255).astype(np.uint8)
+                    # Use K-Means clustering to cluster the coordinates into N clusters
+                    # MAX 7 for coloring
+                    zero_coords = np.column_stack(np.nonzero(1-erosion))
+                    if zero_coords.shape[0] == 0:
+                        skipped += 1
+                        print(f'Skipped Good reconstruction: {skipped}')
+                        continue
+                    num_clusters = 6
+                    kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+                    kmeans.fit(zero_coords)
 
-                #     numpy_image = numpy_image.transpose(1,2,0)
+                    # # Get the cluster labels and cluster centers
+                    labels = kmeans.labels_
+                    centers = kmeans.cluster_centers_
 
-                #     # Convert NumPy array to OpenCV image (assuming the image is in RGB format)
-                #     # opencv_image = numpy_image.transpose(1, 2, 0)
+                    # # Convert grayscale mask to a 3-channel image
+                    color_mask = ground_truth
+                    mask = np.zeros_like(numpy_image)
 
-                #     # Perform closing operation using OpenCV
-                #     kernel_size = 10
-                #     closing_kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                #     closed_image = cv2.morphologyEx(numpy_image, cv2.MORPH_CLOSE, closing_kernel)
+                    # # Draw bounding boxes around each cluster on the color image with different colors
+                    for i in range(num_clusters):
+                        cluster_points = zero_coords[labels == i]
+                        color = tuple(np.random.randint(0, 256, 3).tolist())  # Random color for each cluster
+                        for point in cluster_points:
+                            cv2.circle(color_mask, (point[1], point[0]), 1, color, -1)
+                        if len(cluster_points) > 0:
+                            # Calculate bounding box for the cluster
+                            y_min, x_min = np.min(cluster_points, axis=0)
+                            y_max, x_max = np.max(cluster_points, axis=0)
+                            x, y, w, h = int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)
 
-                #     # Perform opening operation using OpenCV
-                #     opening_kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                #     opened_image = cv2.morphologyEx(closed_image, cv2.MORPH_OPEN, opening_kernel)
-                #     # opened_image = cv2.morphologyEx(opened_image, cv2.MORPH_DILATE, opening_kernel)
-                #     # opened_image = cv2.morphologyEx(closed_image, cv2.MORPH_OPEN, opening_kernel)
-                #     # Find the coordinates of the non-zero pixels in the binary image
+                            # if w*h > (erosion.shape[0] * erosion.shape[1]) / 40:
+                            # Draw bounding box on the color image
+                            cv2.rectangle(color_mask, (x, y), (x + w, y + h), color, 2)
+                            cv2.rectangle(mask, (x, y), (x + w, y + h), 255, -1)
+                            
+                    # cv2.imshow("mask", mask)
+                    # cv2.imshow("c_mask", color_mask)
+                    # cv2.waitKey()
+                    # apply homography to mask where???
+                                
+                    if np.mean(mask) == 0:
+                        skipped += 1
+                        print(f'Skipped empty mask: {skipped}')
+                        continue
 
+                    # Select which images will be picked and transform mask to it?
+ 
+                    scene.densifyCameras(ground_truth=ground_truth, mask=mask, camera_position=camera.T)
+                    crops_added += 1
+                    print(f'Crops added :{crops_added*5}')
+                    # for now if mask is completely black, take complete image
+                    # cams = scene.getTrainCameras().copy()
+                    # for i in range(2):
+                    #     cams[-i].update_mask(mask)
+                    # Store mask with image so psnr gets calculated only on masked parts 
 
-                #     nonzero_coords = np.column_stack(np.where(opened_image == 0))
-
-                #     # Use K-Means clustering to cluster the coordinates into 3 clusters
-                #     # MAX 7 for coloring
-                #     num_clusters = 5
-                #     kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-                #     kmeans.fit(nonzero_coords)
-
-                #     # Get the cluster labels and cluster centers
-                #     labels = kmeans.labels_
-                #     centers = kmeans.cluster_centers_
-
-                #     # Convert grayscale mask to a 3-channel image
-                #     color_mask = cv2.cvtColor(numpy_image, cv2.COLOR_GRAY2BGR)
-                #     mask = np.zeros_like(numpy_image)
-
-                #     # Draw bounding boxes around each cluster on the color image with different colors
-                #     for i in range(num_clusters):
-                #         cluster_points = nonzero_coords[labels == i]
-                #         color = tuple(np.random.randint(0, 256, 3).tolist())  # Random color for each cluster
-                #         for point in cluster_points:
-                #             cv2.circle(color_mask, (point[1], point[0]), 1, color, -1)
-                #         if len(cluster_points) > 0:
-                #             # Calculate bounding box for the cluster
-                #             y_min, x_min = np.min(cluster_points, axis=0)
-                #             y_max, x_max = np.max(cluster_points, axis=0)
-                #             x, y, w, h = int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)
-
-                #             # Draw bounding box on the color image
-                #             cv2.rectangle(color_mask, (x, y), (x + w, y + h), color, -1)
-                #             cv2.rectangle(mask, (x, y), (x + w, y + h), 255, 2)
-
-                #     # Display the results
-                #     cv2.imshow('Original Image', numpy_image)
-                #     cv2.imshow('Opened Image', opened_image)
-                #     cv2.imshow('Result Image', color_mask)
-                #     cv2.imshow('Result Image', mask)
-                #     cv2.waitKey(0)
-                #     cv2.destroyAllWindows()
+                    # saved_mask = (cams[-1].mask.detach().cpu().numpy())     
+                    # saved_mask = saved_mask.transpose(1,2,0)
+                    # Display the results
+                    # cv2.imshow('Original Image', numpy_image)
+                    # cv2.imshow('Opened Image', opened_image)
+                    # cv2.imshow('Result Image', color_mask)
+                    # cv2.imshow('Result Image', mask)
+                    # cv2.imshow('Saved_mask', saved_mask)
+                    # cv2.waitKey(0)
+                    # cv2.destroyAllWindows()
                     
             # Create crop from in-between views and add camera to training list
-
-
-
 
 
 def prepare_output_and_logger(args):    
@@ -342,3 +406,4 @@ if __name__ == "__main__":
 
     # All done
     print("\nTraining complete.")
+    wandb.finish()

@@ -35,11 +35,16 @@ class CameraInfo:
         self.image_name = image_name
         self.width = width
         self.height = height
+        self.mask = None
         
     def load_image(self):
         self.image = Image.open(self.image_path)
     
+    def set_mask(self, mask):
+        self.mask = mask
         
+    def get_mask(self):
+        return self.mask
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -136,7 +141,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8):
+def readColmapSceneInfo(path, images, eval, llffhold=15):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -162,6 +167,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 1]
         test_cam_infos = []
         in_between_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 1]
+      
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 

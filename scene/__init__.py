@@ -8,6 +8,7 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+from segment.sam import get_sam_masks
 
 import os
 import random
@@ -18,6 +19,9 @@ from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 import torch
+from scipy.spatial import KDTree
+import cv2
+import numpy as np
 
 class Scene:
 
@@ -75,7 +79,6 @@ class Scene:
         # Create data structure to efficiently query closest camera
        
         # Decide which images will be used n load in train and test cameras
-        
         for cam in self.scene_info.train_cameras:
             cam.load_image()
         for cam in self.scene_info.test_cameras:
@@ -86,6 +89,10 @@ class Scene:
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(self.scene_info.train_cameras, resolution_scale, args)
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(self.scene_info.test_cameras, resolution_scale, args)
+            print("Loading Im Between Cameras")
+            # self.in_between_cameras[resolution_scale] = cameraList_from_camInfos(self.scene_info.in_between_cameras, resolution_scale, args)
+            # print()
+
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
@@ -105,9 +112,12 @@ class Scene:
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
     
+    def getInBetweenCameras(self, scale=1.0):
+        return self.scene_info.in_between_cameras
+
+    
     def findHomography(self, image1, image2):
-        import cv2
-        import numpy as np
+       
         # image1 = image1_tensor.squeeze().permute(1, 2, 0).cpu().numpy()
         # image2 = image2_tensor.squeeze().permute(1, 2, 0).cpu().numpy()
         image2 = cv2.cvtColor(image2, cv2.COLOR_BGR2RGB)
@@ -137,7 +147,7 @@ class Scene:
         # Calculate the homography matrix using RANSAC
         H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
-        img_matches = cv2.drawMatches((image1*255).astype(np.uint8), keypoints1, (image2*255).astype(np.uint8), keypoints2, matches[:10], None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        # img_matches = cv2.drawMatches((image1*255).astype(np.uint8), keypoints1, (image2*255).astype(np.uint8), keypoints2, matches[:10], None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
 
     # Display or save the image with matches
         # cv2.imshow('Matches', img_matches)
@@ -145,63 +155,115 @@ class Scene:
 
         return H
     
-    def densifyCameras(self, scale=1.0, ground_truth=None, mask=None, camera_position=(0,0,0)):
-        # Pop camera(s) from in-between standpoints that are close to the badly reconstructed view
+    def densifyCameras(self, scale=1.0, ground_truth=None, cam_info=None, psnr=None, points=None):
 
-        from scipy.spatial import KDTree
-        import cv2
-        import numpy as np
-        positions = [tuple(x.T) for x in self.scene_info.in_between_cameras]
-        cameras = [x for x in self.scene_info.in_between_cameras]
-        if len(positions) == 0:
-            return
-        # positions = [tuple(x) for x in positions]
-        self.kdtree = KDTree(positions)
-        amount_to_return = 2
-        idxs = []
-        if len(positions) == 0:
-            return
-        if len(positions) < amount_to_return:
-            idxs = self.kdtree.indices
-        else:
-            _, idxs = self.kdtree.query(camera_position,k=amount_to_return)
 
-        print(idxs)
-        
-        for idx in idxs:
-            cameras[idx].load_image()
-          
-    
-            # Calculate homography, apply to mask and store it somewhere
+        points_ = np.array([[x,y] for (y,x) in points])
+        numpy_image = np.array(ground_truth)
+        masks = get_sam_masks(np.clip(numpy_image * 255.0, 0, 255).astype(np.uint8))
 
-            # Convert from pytorch to opencv
-            numpy_image = np.array(cameras[idx].image)
-            # numpy_image = numpy_image.transpose(1,2,0)
+        masks_added_idx = []
+        for centroid in points_:
+            j = 0
+            score = []
+            mask_idx = []
+            area = ground_truth.shape[0]*ground_truth.shape[1]
+            curr_best_idx = 0
+            for mask_ in masks:
+                # Check if mask contains centroid and find smallest one
+                
+                segmentation = mask_['segmentation']
             
-            H = self.findHomography(ground_truth, numpy_image)
+                img = np.resize(segmentation.astype(np.uint8) * 255, (segmentation.shape[0],segmentation.shape[1], 1))
+                for point in points_:
+                    point = int(point[1]), int(point[0])
+                    cv2.circle(img, tuple(point), 5, 127, -1)
+                # cv2.imshow("curr_mask", img)
 
-            # print(camera_position, positions[idx])
-            warped_mask = cv2.warpPerspective(mask, H, (numpy_image.shape[1], numpy_image.shape[0]), borderValue=0)
+                # score = mask_['predicted_iou']
+                if segmentation[int(centroid[0])][int(centroid[1])]:
+                    m_area = mask_['area']
+                    if m_area < area:
+                        curr_best_idx = j
+                        area = m_area
+                        # masks_added_idx.append(j)
+                        # score.append(mask_['predicted_iou'])     
+                j+=1
+            masks_added_idx.append(curr_best_idx)
+            # cv2.waitKey()
+            # cv2.destroyAllWindows()
 
+            # mask_ = masks[kdTree.query(centroid)[1]]
+            
+        # TODO Extract useful masks from sam and get bounding box -> store bounding box as crop + extra info    
+
+        result = np.full(segmentation.shape, False, dtype=bool)  
+
+        for mask__idx in set(masks_added_idx):
+            mask_ = masks[mask__idx]
+            result = np.bitwise_or(result, mask_['segmentation'])
+
+        # calculate psnr on masked parts
+            
+        masked_psnr = result.astype(np.float32) * np.resize(psnr.cpu().numpy(), result.shape)
+
+        mean_masked_psnr = np.sum(masked_psnr) / np.count_nonzero(result.astype(np.float32))
+        print(f'Mean masked psnr is {mean_masked_psnr}')
+        # if mean_masked_psnr > 0.30:
+        #     return
+ 
+
+        # img = result.astype(np.uint8)
+        # img *= 255
+        # cv2.imshow("lol", img)
+        # cv2.imshow("gt", ground_truth)
+         
+        
+        # Show added masks
+        k = 0
+        for mask__idx in set(masks_added_idx):
+            mask_ = masks[mask__idx]
+            img = np.resize(mask_['segmentation'].astype(np.uint8) * 255, (mask_['segmentation'].shape[0],mask_['segmentation'].shape[1], 1))
+            for point in points_:
+                point = int(point[1]), int(point[0])
+                cv2.circle(img, tuple(point), 3, 127, -1)  # Grey circles
+                
+            
+            # cv2.imshow(str(k) , img)
+            k+=1
+        # cv2.waitKey()
+        # cv2.destroyAllWindows()  
+            # cv2.waitKey()
+            # cv2.destroyAllWindows()   
+            
+    
+            # Use centroids for SAM :D
+
+            
+
+            # Loop through masks and find potential ones
             # cv2.imshow("gt", ground_truth)
             # cv2.imshow("new_image", numpy_image)
             # cv2.imshow("wp", warped_mask)
             # cv2.imshow("mask", mask)
+            # cv2.imshow("sam", np.uint8(masks[0]['segmentation'])*255)
             # cv2.waitKey()
-            # convert to tensor
-
-            # Apply homography to mask
-
+            # cv2.destroyAllWindows()
 
             # Perform operation based on bounding boxes to add crop in stead of 
-            new_cam = cameraList_from_camInfos([cameras[idx]], scale, self.args)
-            #
-            warped_mask_torch = torch.from_numpy(warped_mask/255.0).cuda()
-            binary_warped_mask_torch = torch.where(warped_mask_torch != 0, torch.tensor(1).cuda(), warped_mask_torch)
-            new_cam[0].update_mask(binary_warped_mask_torch)
-            #
-            self.train_cameras[scale].extend(new_cam)
-            self.scene_info.in_between_cameras.remove(cameras[idx])
+        cam_info.load_image()
+        new_cam = cameraList_from_camInfos([cam_info], scale, self.args)
+        cam_info.unload_image()
+        # #
+        # warped_mask_torch = torch.from_numpy(warped_mask/255.0).cuda()
+        # binary_warped_mask_torch = torch.where(warped_mask_torch != 0, torch.tensor(1).cuda(), warped_mask_torch)
+
+        new_cam[0].update_mask(torch.from_numpy(result/255.0).cuda())
+        # #
+        self.train_cameras[scale].extend(new_cam)
+            # self.scene_info.in_between_cameras.remove(cameras[idx])
+        self.scene_info.in_between_cameras.remove(cam_info)
+            # cameras[idx].unload_image()
 
         # cv2.imshow("mask", mask)
         # cv2.imshow("warped mask", warped_mask)

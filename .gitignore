@@ -15,3 +15,9 @@ ignatius
 used_images
 truck_big
 wandb
+sam_vit_h_4b8939.pth
+segment
+train_ss
+train_video
+SIBR_viewers
+

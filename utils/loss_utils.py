@@ -14,6 +14,14 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 
+def element_wise_psnr(render, gt):
+    epsilon = 1e-10  # A small constant to avoid division by zero
+    mse = torch.pow(render - gt, 2)
+    mse = torch.max(mse, torch.tensor([epsilon]).cuda()) 
+    psnr = 20*torch.log10(torch.tensor([255.0]).cuda()) - 10*torch.log10(mse)
+    psnr /= 255.0
+    return psnr
+
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
 

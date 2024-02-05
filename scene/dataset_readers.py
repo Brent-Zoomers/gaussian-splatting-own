@@ -39,6 +39,9 @@ class CameraInfo:
         
     def load_image(self):
         self.image = Image.open(self.image_path)
+
+    def unload_image(self):
+        self.image = None
     
     def set_mask(self, mask):
         self.mask = mask
@@ -141,7 +144,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=15):
+def readColmapSceneInfo(path, images, eval, llffhold=6):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")

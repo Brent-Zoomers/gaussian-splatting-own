@@ -28,6 +28,44 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+import wandb
+import math
+
+start_epoch = 0
+finish_epoch = 15_000
+
+
+start_value = 1e-3
+finish_value = 1e-6
+
+def logarithmic_scale_lr(epoch):
+    if epoch < start_epoch:
+        return start_value
+    elif epoch >= finish_epoch:
+        return finish_value
+    else:
+        scale = math.log(finish_value / start_value) / (finish_epoch - start_epoch)
+        return start_value * math.exp(scale * (epoch - start_epoch))
+    
+
+def inverse_logarithmic_scale_lr(epoch):
+    epoch = finish_epoch - epoch
+   
+    scale = math.log(finish_value / start_value) / (finish_epoch - start_epoch)
+    return start_value - (start_value * math.exp(scale * (epoch - start_epoch)))
+
+def inverse_logarithmic_scale_lr_clamped(epoch):
+
+    if epoch < start_epoch:
+        return start_value
+    if epoch > finish_epoch:
+        return finish_value
+
+    epoch = finish_epoch - epoch
+   
+    scale = math.log(finish_value / start_value) / (finish_epoch - start_epoch)
+    return start_value - (start_value * math.exp(scale * (epoch - start_epoch)))
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -113,12 +151,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Average size
         # Add average size of gaussian as regularization
-        # scalings = gaussians.get_scaling
-        # loss += 1.0/(torch.mean((torch.norm(scalings, dim=1) / scalings.size()[0])) * opt.reg_constant)
-        # loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * (1.0 / ((iteration//1000+1)*1000) )
-        loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * values[iteration/30000.0 * 6]
+        loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * opt.reg_constant # Works good = original version dont change
+        # loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * inverse_logarithmic_scale_lr_clamped(iteration)
+
+        # print(loss)
         loss.backward()
         
+
+        wandb.log({"num_gaussians": gaussians.get_scaling.shape[0],"loss": loss})
 
         iter_end.record()
 
@@ -241,6 +281,22 @@ if __name__ == "__main__":
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
+    reg_scale = op.extract(args).reg_constant
+
+
+    wandb.init(
+        # set the wandb project where this run will be logged
+        project="regularization",
+        name=f'v2_{reg_scale}',
+        # track hyperparameters and run metadata
+        config={
+        "dataset": "tandt_truck",
+        "epochs": 30_000,
+        "scale_factor": reg_scale,
+    }
+)
+    
+
     print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
@@ -253,3 +309,4 @@ if __name__ == "__main__":
 
     # All done
     print("\nTraining complete.")
+    wandb.finish()

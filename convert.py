@@ -51,7 +51,7 @@ if not args.skip_matching:
     if exit_code != 0:
         logging.error(f"Feature matching failed with code {exit_code}. Exiting.")
         exit(exit_code)
-
+    
     ### Bundle adjustment
     # The default Mapper tolerance is unnecessarily large,
     # decreasing it speeds up bundle adjustment steps.

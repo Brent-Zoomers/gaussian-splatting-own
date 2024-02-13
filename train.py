@@ -68,8 +68,12 @@ def inverse_logarithmic_scale_lr_clamped(epoch):
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
+    print("intraining")
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
+
+    print(dataset.sh_degree)
+
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -148,10 +152,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         
 
+        
 
         # Average size
         # Add average size of gaussian as regularization
-        loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * opt.reg_constant # Works good = original version dont change
+        # print(opt.reg_constant)
+        # loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * opt.reg_constant # Works good = original version dont change
         # loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * inverse_logarithmic_scale_lr_clamped(iteration)
 
         # print(loss)
@@ -282,15 +288,17 @@ if __name__ == "__main__":
     args.save_iterations.append(args.iterations)
     
     reg_scale = op.extract(args).reg_constant
+    sh_degree = lp.extract(args).sh_degree
+    dataset = lp.extract(args).model_path
 
 
     wandb.init(
         # set the wandb project where this run will be logged
         project="regularization",
-        name=f'v2_{reg_scale}',
+        name=f'full_eval_{dataset}_{reg_scale}_{sh_degree}',
         # track hyperparameters and run metadata
         config={
-        "dataset": "tandt_truck",
+        "dataset": f'{dataset}',
         "epochs": 30_000,
         "scale_factor": reg_scale,
     }
@@ -298,11 +306,12 @@ if __name__ == "__main__":
     
 
     print("Optimizing " + args.model_path)
-
+    print("lolol")
     # Initialize system state (RNG)
     safe_state(args.quiet)
-
+    
     # Start GUI server, configure and run training
+    torch.cuda.empty_cache()
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
@@ -310,3 +319,4 @@ if __name__ == "__main__":
     # All done
     print("\nTraining complete.")
     wandb.finish()
+    torch.cuda.empty_cache()

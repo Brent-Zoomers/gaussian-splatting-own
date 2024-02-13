@@ -93,7 +93,6 @@ class Scene:
             # self.in_between_cameras[resolution_scale] = cameraList_from_camInfos(self.scene_info.in_between_cameras, resolution_scale, args)
             # print()
 
-
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
                                                            "point_cloud",
@@ -114,6 +113,12 @@ class Scene:
     
     def getInBetweenCameras(self, scale=1.0):
         return self.scene_info.in_between_cameras
+    
+    def addTrainCam(self, cam, scale=1.0):
+        self.train_cameras[scale].extend(cam)
+
+    def deleteInBetweenCam(self, camera_info):
+        self.scene_info.in_between_cameras.remove(camera_info)
 
     
     def findHomography(self, image1, image2):

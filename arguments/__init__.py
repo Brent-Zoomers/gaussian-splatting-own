@@ -87,6 +87,11 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
+
+        self.stdev_threshold_skipped = 2
+        self.stdev_threshold_segment = 4
+        self.densify_viewpoint_iterations = []
+        self.debug_file = ""
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

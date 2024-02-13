@@ -144,7 +144,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=6):
+def readColmapSceneInfo(path, images, eval, llffhold=50):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -163,9 +163,9 @@ def readColmapSceneInfo(path, images, eval, llffhold=6):
     # Choose which ones will be used initially
 
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 1]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
-        in_between_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0 and idx % llffhold != 1]
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 1 or idx % llffhold == llffhold//2]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == llffhold//4]
+        in_between_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != llffhold//2 and idx % llffhold != 1 and idx % llffhold != llffhold//4]
     else:
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 1]
         test_cam_infos = []

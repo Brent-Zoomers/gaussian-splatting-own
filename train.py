@@ -17,7 +17,7 @@ Threshold for when to add crop is bad/terrible
 
 """
 
-
+from segment.sam import get_sam_masks
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -43,7 +43,7 @@ wandb.init(
     
     # track hyperparameters and run metadata
     config={
-    "crop_iterations": [5_000, 10_000],
+    "crop_iterations": [2500, 5000],
     "dataset": "truck_big",
     "images": "images_4",
     "epochs": 30_000,
@@ -69,10 +69,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
-    densify_viewpoints = [5000, 10_000]
+    # Debug variables
+    frames_added = []
+
+    print(opt.densify_viewpoint_iterations)
+    densify_viewpoints = [int(''.join(opt.densify_viewpoint_iterations))]
+    # print(densify_viewpoints)
+    # exit()
     crops_added = 0
     skipped = 0
     # densify_viewpoints = []
+    print(densify_viewpoints)
 
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -122,6 +129,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # if viewpoint_cam.image_name not in seen:
         #     seen[viewpoint_cam.image_name] = True
             # print(viewpoint_cam.image_name)
+        
+        # count = 0
+        # for x in viewpoint_stack:
+        #     gt = x.original_image
+        #     cv_gt = pytorch2opencv(gt*viewpoint_stack[0].mask)
+        #     count += 1
+        #     # if torch.min(viewpoint_stack[0].mask) == 0:
+        #     cv2.imshow(f'{count}', cv_gt)
+        #     cv2.waitKey()
+                
+
+
 
         # Render
         if (iteration - 1) == debug_from:
@@ -157,7 +176,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             cv2.imshow("render", pytorch2opencv(image))
             cv2.imshow("mask", pytorch2opencv(mask))
             cv2.waitKey()
-
 
             # show_pytorch_image(mask, "mask")
             # show_pytorch_image(gt_image, "gt_image")
@@ -233,99 +251,194 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 mean_psnr = np.mean(psnr_list)
                 stdev_psnr = np.std(psnr_list)
 
-                
-
-
-
-
-
-
+                # SAM Test
                 for camera_info in viewpoint_stack_:
                     count += 1
-                    if count % 10 != 0:
-                        continue
+                    # if count % 25 != 0:
+                    #     continue
+                    # print(count)
                     
                     camera_info.load_image()
                     camera = cameraList_from_camInfos([camera_info], 1.0, dataset)[0]
                     gt_image = camera.original_image.cuda()
                     camera_info.unload_image()
-                    # break
+
                     render_pkg = render(camera, gaussians, pipe, bg)
                     image, _,_,_ = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
-                    # Calculate element-wise PSNR and create binary mask
-                    psnr = element_wise_psnr(image, gt_image)
+                
+                    cv_gt_image = pytorch2opencv(gt_image)
 
-                    # Convert to single channel image -> (magnitude?)
+                    psnr = element_wise_psnr(image, gt_image)
                     grayscale_image = torch.mean(psnr, dim=0, keepdim=True)
 
-                    print(f'{torch.mean(torch.mean(grayscale_image))} | {mean_psnr - 2*stdev_psnr}')
-                    if torch.mean(torch.mean(grayscale_image)) > mean_psnr - 2*stdev_psnr:
-                        print("Skipped")
+                    if torch.mean(grayscale_image) > mean_psnr - int(opt.stdev_threshold_skipped)*stdev_psnr:
                         continue
 
-                    # Use mean and stdev to calculate badly reconstructed parts of image
-                    m = torch.mean(grayscale_image)
-                    stdev = torch.std(grayscale_image)
-                    mask = (grayscale_image >= m-stdev).float()
 
-                    # show_pytorch_image([mask, gt_image], ["mask", "gt_image"])
+                    # Store if non exists and read in if exists
+                    masks=[]
+                    name = camera.image_name.split("\\")[-1]
+                    if os.path.isfile(f'segmentations/{name}.npy'):
+                        masks = np.load(f'segmentations/{name}.npy', allow_pickle=True)
+                    else:  
+                        masks = get_sam_masks(np.clip(cv_gt_image * 255.0, 0, 255).astype(np.uint8))
+                        np.savez_compressed(f'segmentations/{name}.npy', masks)
+
+                    psnr = element_wise_psnr(image, gt_image)
+                    grayscale_image = torch.mean(psnr, dim=0, keepdim=True)
+                    cv_psnr = pytorch2opencv(grayscale_image)
+
+                    final_mask = np.zeros_like(cv_psnr)
+
+                    for mask in masks:
+                        uint8_mask = mask['segmentation'].astype(np.uint8)
+                        masked_gt = cv_psnr * np.resize(uint8_mask, (uint8_mask.shape[0],uint8_mask.shape[1],1))
+
+                        # Calculate masked PSNR
+                        masked_mean_psnr = np.sum(masked_gt) / np.count_nonzero(uint8_mask)
+                        print(f'{masked_mean_psnr:,.4f}|{mean_psnr - int(opt.stdev_threshold_segment)*stdev_psnr:,.4f}')
+                        if masked_mean_psnr < mean_psnr - int(opt.stdev_threshold_segment)*stdev_psnr:
+                            final_mask += np.resize(uint8_mask, (uint8_mask.shape[0],uint8_mask.shape[1],1))
+                            
+
+                    final_mask = final_mask > 0
+                    show_results = True
+
+                    camera_info.load_image()
+                    new_cam = cameraList_from_camInfos([camera_info], 1.0, dataset)
+                    camera_info.unload_image()
+      
+                    new_mask = torch.from_numpy(final_mask.astype(np.uint8)).cuda().permute(2,0,1)
+                    new_cam[0].update_mask(new_mask)
+                    frames_added.append(new_cam[0].image_name)
+                    # # # #
+                    scene.addTrainCam(new_cam)
+                    scene.deleteInBetweenCam(camera_info)
+                   
+
+                    # Add final mask and image to train 
+
+                    # if cv2.waitKey(33) == ord('a'):
+                    #     show_results = not show_results
+                    #     while cv2.waitKey(33) == ord('a'):
+                    #         pass
 
 
-                    # Convert to OpenCV for morphological operations + further processing  
-                    numpy_image = pytorch2opencv(mask)
-                    ground_truth = pytorch2opencv(gt_image)
+                    if cv2.waitKey(33) == ord('a'):
+                        cv2.imshow("mask", final_mask.astype(np.uint8) * 255)  
+                        cv2.imshow("gt", cv_gt_image)  
 
-                    kernel_size = 3
-                    kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                    large_kernel = np.ones((kernel_size+2, kernel_size+2), np.uint8)
+                        cv2.waitKey()
+                        cv2.destroyAllWindows()
 
-                    # closing = cv2.morphologyEx(numpy_image, cv2.MORPH_CLOSE, kernel)
-                    # erosion = cv2.erode(closing, kernel, iterations=5)
-
-                    # kernel op 2x2
-                    erosion = cv2.erode(numpy_image, kernel, iterations=1)
-                    # dilate = cv2.dilate(erosion, kernel, iterations=1)
-                    dilate_3 = cv2.dilate(erosion, large_kernel, iterations=3)
-                    d_inv = 1 - dilate_3
-
-                    # cv2.imshow("???", d_inv)
-                    # cv2.waitKey()
+                    print("lolol")
+    
 
 
-                    # Detect components (N Largest?, Above X Area?)
-                    rv, lab, stats, centroids = cv2.connectedComponentsWithStats(d_inv.astype(np.uint8))
-                    sizes = stats[:,4 ]
-                    flat_indices = np.argpartition(sizes.flatten(), -11)[-11:]
+                        # cv2.imshow("mask", uint8_mask)
+                        # cv2.imshow("masked_gt", masked_gt)
+                        # cv2.waitKey()
+                        # cv2.destroyAllWindows()
 
-                    # Convert flat indices to row, column indices
-                    indices = np.unravel_index(flat_indices, sizes.shape)
-                    non_bg_indices = indices[0][indices[0] != 0]
-                    centroids = centroids[non_bg_indices]
 
-                    if len(centroids) == 0:
-                        skipped += 1
-                        print(f'Skipped Good reconstruction: {skipped}')
-                        continue
 
-                    filtered_mask = np.zeros_like(numpy_image, dtype=np.uint8)
 
-                    for label in non_bg_indices:
-                        # Get the indices of the label in the array
-                        label_indices = np.where(lab == label)
-                        # Set the corresponding elements in the boolean matrix to True
-                        filtered_mask[label_indices] = 255
 
-                    # if np.mean(mask) == 0:
-                    #     skipped += 1
-                    #     print(f'Skipped empty mask: {skipped}')
-                    #     continue
 
-                    # Select which images will be picked and transform mask to it?
+                #
+
+
+
+
+
+
+                # for camera_info in viewpoint_stack_:
+                #     count += 1
+                #     if count % 10 != 0:
+                #         continue
+                    
+                #     camera_info.load_image()
+                #     camera = cameraList_from_camInfos([camera_info], 1.0, dataset)[0]
+                #     gt_image = camera.original_image.cuda()
+                #     camera_info.unload_image()
+                #     # break
+                #     render_pkg = render(camera, gaussians, pipe, bg)
+                #     image, _,_,_ = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+
+                #     # Calculate element-wise PSNR and create binary mask
+                #     psnr = element_wise_psnr(image, gt_image)
+
+                #     # Convert to single channel image -> (magnitude?)
+                #     grayscale_image = torch.mean(psnr, dim=0, keepdim=True)
+
+                #     print(f'{torch.mean(torch.mean(grayscale_image))} | {mean_psnr - 2*stdev_psnr}')
+                #     if torch.mean(torch.mean(grayscale_image)) > mean_psnr - 2*stdev_psnr:
+                #         print("Skipped")
+                #         continue
+
+                #     # Use mean and stdev to calculate badly reconstructed parts of image
+                #     m = torch.mean(grayscale_image)
+                #     stdev = torch.std(grayscale_image)
+                #     mask = (grayscale_image >= m-stdev).float()
+
+                #     # show_pytorch_image([mask, gt_image], ["mask", "gt_image"])
+
+
+                #     # Convert to OpenCV for morphological operations + further processing  
+                #     numpy_image = pytorch2opencv(mask)
+                #     ground_truth = pytorch2opencv(gt_image)
+
+                #     kernel_size = 3
+                #     kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                #     large_kernel = np.ones((kernel_size+2, kernel_size+2), np.uint8)
+
+                #     # closing = cv2.morphologyEx(numpy_image, cv2.MORPH_CLOSE, kernel)
+                #     # erosion = cv2.erode(closing, kernel, iterations=5)
+
+                #     # kernel op 2x2
+                #     erosion = cv2.erode(numpy_image, kernel, iterations=1)
+                #     # dilate = cv2.dilate(erosion, kernel, iterations=1)
+                #     dilate_3 = cv2.dilate(erosion, large_kernel, iterations=3)
+                #     d_inv = 1 - dilate_3
+
+                #     # cv2.imshow("???", d_inv)
+                #     # cv2.waitKey()
+
+
+                #     # Detect components (N Largest?, Above X Area?)
+                #     rv, lab, stats, centroids = cv2.connectedComponentsWithStats(d_inv.astype(np.uint8))
+                #     sizes = stats[:,4 ]
+                #     flat_indices = np.argpartition(sizes.flatten(), -11)[-11:]
+
+                #     # Convert flat indices to row, column indices
+                #     indices = np.unravel_index(flat_indices, sizes.shape)
+                #     non_bg_indices = indices[0][indices[0] != 0]
+                #     centroids = centroids[non_bg_indices]
+
+                #     if len(centroids) == 0:
+                #         skipped += 1
+                #         print(f'Skipped Good reconstruction: {skipped}')
+                #         continue
+
+                #     filtered_mask = np.zeros_like(numpy_image, dtype=np.uint8)
+
+                #     for label in non_bg_indices:
+                #         # Get the indices of the label in the array
+                #         label_indices = np.where(lab == label)
+                #         # Set the corresponding elements in the boolean matrix to True
+                #         filtered_mask[label_indices] = 255
+
+                #     # if np.mean(mask) == 0:
+                #     #     skipped += 1
+                #     #     print(f'Skipped empty mask: {skipped}')
+                #     #     continue
+
+                #     # Select which images will be picked and transform mask to it?
  
-                    scene.densifyCameras(ground_truth=ground_truth, psnr=grayscale_image,  points=centroids, cam_info=camera_info)
-                    crops_added += 1
-                    print(f'Crops added :{crops_added*5}')
+                #     scene.densifyCameras(ground_truth=ground_truth, psnr=grayscale_image,  points=centroids, cam_info=camera_info)
+                #     crops_added += 1
+                #     print(f'Crops added :{crops_added*5}')
 
 
 

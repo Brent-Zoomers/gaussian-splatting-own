@@ -90,6 +90,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+        if iteration < 15_000:
+            scale_reg_term = (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling))
+            loss += opt.reg_constant * scale_reg_term
+            
+
+
         loss.backward()
 
         iter_end.record()

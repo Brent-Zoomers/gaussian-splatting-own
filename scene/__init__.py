@@ -17,7 +17,8 @@ from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
-
+import torch
+import numpy as np
 class Scene:
 
     gaussians : GaussianModel
@@ -68,19 +69,82 @@ class Scene:
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
-        for resolution_scale in resolution_scales:
-            print("Loading Training Cameras")
-            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
-            print("Loading Test Cameras")
-            self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
 
+        # min_values = torch.empty(0)
+        # scale_factor = torch.empty(0)
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
-                                                           "point_cloud",
-                                                           "iteration_" + str(self.loaded_iter),
-                                                           "point_cloud.ply"))
+                                                        "point_cloud",
+                                                        "iteration_" + str(self.loaded_iter),
+                                                        "point_cloud.ply")) 
+            # loaded_tensors = []
+            # with open(f'{args.model_path}/tensors.txt', 'r') as file:
+            #     lines = file.readlines()
+            #     for line in lines:
+            #         loaded_tensors.append(torch.tensor(np.array(eval(line.strip()), dtype=np.float32)).cuda())
+            # min_values = loaded_tensors[0]
+            # scale_factor = loaded_tensors[1]
+
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+
+            # with torch.no_grad():
+
+            #     min_values = torch.min(gaussians._xyz, dim=0)[0]
+            #     max_values = torch.max(gaussians._xyz, dim=0)[0]
+            #     print(min_values)
+            #     print(max_values)
+                
+            #     # Shift all dimensions to make them positive
+            #     gaussians._xyz = gaussians._xyz - torch.tensor(min_values).cuda()
+            #     max_vals = torch.max(gaussians._xyz, dim=0)[0]
+            #     # Compute the scale factor to fit the point cloud within the unit box
+            #     scale_factor = (1.0 / torch.max(max_vals)) * 150
+            #     # Scale the point cloud to fit within the unit box
+            #     gaussians._xyz = gaussians._xyz * scale_factor
+
+            #     with open(f'{args.model_path}/tensors.txt', 'w') as file:
+            #         file.write(min_values.__repr__() + '\n')
+            #         file.write(scale_factor.__repr__() + '\n')    
+
+
+        for resolution_scale in resolution_scales:
+            print("Loading Training Cameras")
+            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args) #, (-min_values.cpu().numpy(), scale_factor.cpu().numpy())
+            print("Loading Test Cameras")
+            self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args) #, (-min_values.cpu().numpy(), scale_factor.cpu().numpy())
+
+         
+        # print("Here")
+        
+        #     # Compute the maximum value along each dimension
+        #     max_vals = torch.max(gaussians._xyz, dim=0)[0]
+            
+        #     # Compute the scale factor to fit the point cloud within the unit box
+        #     scale_factor = (1.0 / torch.max(max_vals))
+            
+        #     # Scale the point cloud to fit within the unit box
+        #     # gaussians._xyz = shifted_point_cloud * scale_factor
+
+        #     for resolution_scale in resolution_scales:
+        #         for cam in self.train_cameras[resolution_scale]:
+        #             pass
+        #             # cam.camera_center -= min_values
+        #             # cam.translate(min_values.cpu().numpy())
+        #             # cam.T += min_values.cpu().numpy()
+        #             # cam.T *= scale_factor.cpu().numpy()
+
+        #         for cam in self.test_cameras[resolution_scale]:
+        #             pass
+        #             # cam.camera_center -= min_values
+        #             # cam.translate(min_values.cpu().numpy())
+        #             # cam.T += min_values.cpu().numpy()
+        #             # cam.T *= scale_factor.cpu().numpy()
+
+
+            
+        # print(self.train_cameras[1.0][0].T)       
+                
 
     def save(self, iteration, passed_time=0):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))

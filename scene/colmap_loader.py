@@ -12,6 +12,7 @@
 import numpy as np
 import collections
 import struct
+from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"])
@@ -129,7 +130,6 @@ def read_points3D_binary(path_to_model_file):
         void Reconstruction::WritePoints3DBinary(const std::string& path)
     """
 
-
     with open(path_to_model_file, "rb") as fid:
         num_points = read_next_bytes(fid, 8, "Q")[0]
 
@@ -191,7 +191,18 @@ def read_extrinsics_binary(path_to_model_file):
                 fid, num_bytes=64, format_char_sequence="idddddddi")
             image_id = binary_image_properties[0]
             qvec = np.array(binary_image_properties[1:5])
-            tvec = np.array(binary_image_properties[5:8])
+            tvec = np.array(binary_image_properties[5:8]) 
+
+
+            #
+            # R = np.transpose(qvec2rotmat(qvec))
+            # T = np.array(tvec)
+            # W2C = getWorld2View2(R, T)
+           
+            # cam_centers.append(C2W[:3, 3:4])
+
+            #
+
             camera_id = binary_image_properties[8]
             image_name = ""
             current_char = read_next_bytes(fid, 1, "c")[0]

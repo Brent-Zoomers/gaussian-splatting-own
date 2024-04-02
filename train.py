@@ -22,6 +22,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import torchvision.transforms as T
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -30,41 +31,9 @@ except ImportError:
 
 import wandb
 import math
+import torch.distributions as distributions
+import matplotlib.pyplot as plt
 
-start_epoch = 0
-finish_epoch = 15_000
-
-
-start_value = 1e-3
-finish_value = 1e-6
-
-def logarithmic_scale_lr(epoch):
-    if epoch < start_epoch:
-        return start_value
-    elif epoch >= finish_epoch:
-        return finish_value
-    else:
-        scale = math.log(finish_value / start_value) / (finish_epoch - start_epoch)
-        return start_value * math.exp(scale * (epoch - start_epoch))
-    
-
-def inverse_logarithmic_scale_lr(epoch):
-    epoch = finish_epoch - epoch
-   
-    scale = math.log(finish_value / start_value) / (finish_epoch - start_epoch)
-    return start_value - (start_value * math.exp(scale * (epoch - start_epoch)))
-
-def inverse_logarithmic_scale_lr_clamped(epoch):
-
-    if epoch < start_epoch:
-        return start_value
-    if epoch > finish_epoch:
-        return finish_value
-
-    epoch = finish_epoch - epoch
-   
-    scale = math.log(finish_value / start_value) / (finish_epoch - start_epoch)
-    return start_value - (start_value * math.exp(scale * (epoch - start_epoch)))
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
@@ -72,9 +41,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
 
-    print(dataset.sh_degree)
-
     scene = Scene(dataset, gaussians)
+    original_amount = gaussians.get_xyz.shape[0]
+
+    # start size
+    current_size = 0.25
+    end_size = 1.0
+
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -92,20 +65,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter += 1
     import time
     start_time = time.time()
+    #   
 
-    start_value = 0.001
-    end_value = 0.0001
-    num_steps = 6  # You can adjust the number of steps as needed
+    # beta_distribution = distributions.Beta(5, 2)
 
-    # Generate exponentially decreasing values
-    values = torch.logspace(
-        start=torch.log10(torch.tensor(start_value)),
-        end=torch.log10(torch.tensor(end_value)),
-        steps=num_steps,
-        base=10.0,
-        dtype=torch.float
-    )
 
+    # scaling_weight = torch.nn.Parameter(torch.tensor(-20.0, requires_grad=True).cuda())
+    # optimizer_weight = torch.optim.Adam([scaling_weight], lr=0.001)
+    #
 
     for iteration in range(first_iter, opt.iterations + 1):        
         if network_gui.conn == None:
@@ -146,25 +113,77 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
+
+        if iteration % 3000 == 0:
+            current_size = torch.min(torch.tensor(1.0), torch.tensor(current_size*2))
+
+        
+
         gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
+
+        og_h, og_w = gt_image.shape[-2:]
+        n_h = int(og_h * current_size)
+        n_w = int(og_w * current_size)
+
+        transform = T.Resize((n_h, n_w))
+
+
+        Ll1 = l1_loss(transform(image), transform(gt_image))
+
+        quantity_value = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
        
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        
+        loss = quantity_value
 
-        
+        quantity_loss = quantity_value
 
+        # FTT
+        # import torch.fft as fft
+        # max_val = torch.max(torch.max(torch.real(fft.fftn(gt_image))), torch.max(torch.real(fft.fftn(image))))
+        # f_Ll1 = l1_loss(torch.real(fft.fftn(image/max_val)), torch.real(fft.fftn(gt_image/max_val))) * 1e4
+
+        # loss += f_Ll1
+        
         # Average size
         # Add average size of gaussian as regularization
         # print(opt.reg_constant)
-        # loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * opt.reg_constant # Works good = original version dont change
+         # Works good = original version dont change
+        # print(torch.exp(scaling_weight), scaling_weight)
+        # loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * torch.exp(scaling_weight) # Works good = original version dont change
         # loss += (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling)) * inverse_logarithmic_scale_lr_clamped(iteration)
 
+        # loss1 = torch.exp(scaling_weight) * (gaussians.get_scaling.shape[0]/loss)
+
+        # Calculate KL divergence regularization term
+        # opacity_distribution = distributions.Beta(gaussians.get_opacity, 1 - gaussians.get_opacity)
+        # kl_divergence = distributions.kl.kl_divergence(opacity_distribution, beta_distribution).mean()
+        
+        # Add KL divergence regularization to the loss
+
+        # opacity_reg_term = (1.0 - gaussians.get_opacity).mean()
+        scale_loss = 0
+        if iteration < 15_000:
+            scale_reg_term = (gaussians.get_scaling.shape[0] / torch.sum(gaussians.get_scaling))
+            loss += opt.reg_constant * scale_reg_term
+            scale_loss = opt.reg_constant * scale_reg_term
+
+
+
+
+        # sum_per_gaussian = torch.sum(gaussians.get_scaling, dim=1)        
+        # threshold = torch.quantile(sum_per_gaussian, 0.99)
+        # reg_term = torch.mean(torch.where(sum_per_gaussian > threshold, (sum_per_gaussian-threshold)**2, torch.zeros_like(sum_per_gaussian)))
+        # # loss += opt.beta_scaling_weight * opacity_reg_term
+        # # loss += gaussians.get_scaling.shape[0] / original_amount
+        
+        # # loss += reg_term
+        # new_loss = reg_term
+        # median delen door loss?
+        
         # print(loss)
         loss.backward()
+        # loss1.backward()
         
-
-        wandb.log({"num_gaussians": gaussians.get_scaling.shape[0],"loss": loss})
+        wandb.log({"num_gaussians": gaussians.get_scaling.shape[0],"loss": loss, "scale_loss": scale_loss, "quantity_loss":quantity_loss})
 
         iter_end.record()
 
@@ -203,6 +222,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Optimizer step
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
+                # optimizer_weight.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
             if (iteration in checkpoint_iterations):
@@ -295,7 +315,7 @@ if __name__ == "__main__":
     wandb.init(
         # set the wandb project where this run will be logged
         project="regularization",
-        name=f'full_eval_{dataset}_{reg_scale}_{sh_degree}',
+        name=f'self_scale_{dataset}_{reg_scale}_{sh_degree}',
         # track hyperparameters and run metadata
         config={
         "dataset": f'{dataset}',

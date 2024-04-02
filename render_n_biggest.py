@@ -25,8 +25,8 @@ import time
 timings = []
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, am):
-    render_path = os.path.join(model_path, name, "reduced_{}_{}".format(am, iteration), "renders")
-    gts_path = os.path.join(model_path, name, "reduced_{}_{}".format(am, iteration), "gt")
+    render_path = os.path.join(model_path, name, "show_largest_{}_{}".format(am, iteration), "renders")
+    gts_path = os.path.join(model_path, name, "show_largest_{}_{}".format(am, iteration), "gt")
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
@@ -53,7 +53,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         sum_scalings = torch.prod(scalings, dim=1, keepdim=True).squeeze(1)
 
-        _, indices = torch.topk(sum_scalings, k=am, largest=True)
+        _, indices = torch.topk(sum_scalings, k= int(sum_scalings.shape[0] * am), largest=True)
 
         mask = torch.zeros_like(sum_scalings, dtype=torch.bool).cuda()
         mask[indices] = True
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--amount_biggest_entry", type=int)
+    parser.add_argument("--amount_biggest_entry", type=float)
 
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)

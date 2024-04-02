@@ -53,6 +53,9 @@ class GaussianModel:
         self._opacity = torch.empty(0)
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
+
+        # self.scaling_optimizer_weight = torch.empty(0).cuda()
+
         self.denom = torch.empty(0)
         self.optimizer = None
         self.percent_dense = 0
@@ -70,6 +73,7 @@ class GaussianModel:
             self._opacity,
             self.max_radii2D,
             self.xyz_gradient_accum,
+            # self.scaling_optimizer_weight,
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
@@ -85,6 +89,7 @@ class GaussianModel:
         self._opacity,
         self.max_radii2D, 
         xyz_gradient_accum, 
+        scaling_optimizer_weight,
         denom,
         opt_dict, 
         self.spatial_lr_scale) = model_args
@@ -146,6 +151,7 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        # self.scaling_optimizer_weight = nn.Parameter(torch.tensor(0.00001).requires_grad_(True))
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -158,7 +164,8 @@ class GaussianModel:
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
-            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
+            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
+            # {'params': [self.scaling_optimizer_weight], 'lr': 0.00001, "name": "opt_scaling"}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)

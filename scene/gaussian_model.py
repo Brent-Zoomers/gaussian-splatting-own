@@ -145,16 +145,11 @@ class GaussianModel:
         # alphas = params[...,0]
         # lambdas = params[...,1]
         # directions = params[...,2:5]
-
-        # diffuse -> alpha
-        # specular -> alpha and
-        features_sg = torch.zeros((fused_color.shape[0], 3, 3)).float().cuda()
+        features_sg = torch.zeros((fused_color.shape[0], 3, 5)).float().cuda()
+        # alpha
         features_sg[...,0] = 1.0
         features_sg[...,1] = 0.1
-        features_sg[...,2] = torch.rand_like(features_sg[...,2:5]) + 0.1
-
-
-        features_sgenv
+        features_sg[...,2:5] = torch.rand_like(features_sg[...,2:5]) + 0.1
 
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])

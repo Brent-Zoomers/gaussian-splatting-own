@@ -53,6 +53,54 @@ C4 = [
     0.6258357354491761,
 ]   
 
+# ...x3
+def dot_product(t1, t2):
+    # r1 = torch.rand_like(t1)
+    # r2 = torch.rand_like(t2)
+    res = t1 * t2
+    return torch.sum(res, dim=2)
+
+# Calculate product of Spherical Gaussians
+def calculate_product(g1, g2):
+    pass
+
+def calculate_inner_product(g1, g2):
+    pass
+
+
+def eval_rendering_equation(gaussian_features, env_map, normalized_dirs):
+    """
+    gaussian_features = #Gx3x3  --> #Gx3x#SGs#5
+    env_map = #3x5            --> 3x#SGsx5      PhysG uses  128 SGs  
+    normalized_dirs = #Gx3
+
+    return #Gx3 
+    """
+
+
+
+  
+
+
+
+
+
+
+
+
+
+# N x 3 x 5
+def eval_sg(params, dirs):
+    
+    alphas = params[...,0]
+    lambdas = params[...,1]
+    directions = params[...,2:5]
+
+    directions_normalized = directions/directions.norm(dim=1, keepdim=True)
+
+    rgb = alphas * torch.exp(lambdas * (dot_product(directions_normalized, dirs.unsqueeze(1))-1.0) )
+
+    return rgb
 
 def eval_sh(deg, sh, dirs):
     """

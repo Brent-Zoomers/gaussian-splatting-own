@@ -151,6 +151,8 @@ class GaussianModel:
         features_sg[...,1] = 0.1
         features_sg[...,2:5] = torch.rand_like(features_sg[...,2:5]) + 0.1
 
+        # Diffuse + Specular 
+
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 

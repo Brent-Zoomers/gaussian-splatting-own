@@ -13,7 +13,7 @@ import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
-from utils.sh_utils import eval_sh, eval_sg
+from utils.sh_utils import eval_sh, eval_sg, eval_sg_env
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
@@ -71,18 +71,22 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     colors_precomp = None
     if override_color is None:
         if pipe.convert_SHs_python:
+            dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
+            dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
             if pipe.irradiance_model == "sh":
                 shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
-                dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
-                dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
                 sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
                 colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
             if pipe.irradiance_model == "sg":
                 sgs_view = pc.get_features_sg
-                dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
-                dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
                 sg2rgb = eval_sg(sgs_view, dir_pp_normalized)
                 colors_precomp = torch.clamp_min(sg2rgb + 0.5, 0.0)
+            if pipe.irradiance_model == "sg_env":
+                sg_diff = pc.get_features_diff
+                sg_spec = pc.get_features_spec
+                env_map, normals = torch.rand((1,3,1)).cuda().float(),torch.rand((pc.get_features.shape[0],3)).cuda().float()
+                sgenv2rgb = eval_sg_env(sg_diff, sg_spec, env_map, dir_pp_normalized, normals)
+                colors_precomp = torch.clamp_min(sgenv2rgb + 0.5, 0.0)
             
                 
         else:

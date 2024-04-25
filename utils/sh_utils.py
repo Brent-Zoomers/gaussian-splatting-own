@@ -53,6 +53,17 @@ C4 = [
     0.6258357354491761,
 ]   
 
+# class SphericalGaussian():
+#     def __init__(self, alpha_, lambda_, mu_):
+#         self.alpha_ = alpha_
+#         self.lambda_ = lambda_
+#         self.mu_ = mu_
+
+#     def gaussian_integral_of_product(self, g2):
+#             d_m = torch.norm(self.lambda_*self.mu_+g2.lambda_*g2.mu_)
+#             lambda_m = self.lambda_ + g2.lambda_
+#             return 2*torch.pi*self.alpha_*g2.alpha_ * ((torch.exp(d_m-lambda_m)-torch.exp(-d_m-lambda_m))/(d_m))
+
 # ...x3
 def dot_product(t1, t2):
     # r1 = torch.rand_like(t1)
@@ -68,23 +79,36 @@ def calculate_inner_product(g1, g2):
     pass
 
 
-def eval_rendering_equation(gaussian_features, env_map, normalized_dirs):
+def eval_sg_env(diff, spec, env_map, dirs, normals):
     """
-    gaussian_features = #Gx3x3  --> #Gx3x#SGs#5
-    env_map = #3x5            --> 3x#SGsx5      PhysG uses  128 SGs  
-    normalized_dirs = #Gx3
+    diff: Nx3x1 --> alpha
+    spec: Nx3x2 -> alpha, lambda
+    env_map: Mx3x1 --> alpha
+    dirs: Kx3
+    normals: Nx3
 
-    return #Gx3 
+    out: Nx3
     """
 
+    # Diff
 
+    # Point toward normal with lambda static and alpha taken from {diff}
 
-  
+    diff_expanded = diff.squeeze().unsqueeze(1).repeat(1,1,1) # NxMx3x1
+    
+    # constant * Nx3 + constant * 1x3
+    normals = normals.unsqueeze(1)
+    d_m = 0.1 * normals + 0.1 * torch.tensor([0,1,0]).cuda().float()
+    lambda_m = 0.1 + 0.1
 
+    # Nx3x1 * Mx3x1 * (Nx3 - constant - Nx3 - constant) / Nx3
 
+    res1 = torch.exp(d_m-lambda_m) - torch.exp(-d_m-lambda_m)
+    
+    result = 2 * torch.pi * diff_expanded * env_map.squeeze(2) * ((res1) / (d_m))
 
-
-
+    return torch.sigmoid(torch.sum(result, dim=1))
+    
 
 
 

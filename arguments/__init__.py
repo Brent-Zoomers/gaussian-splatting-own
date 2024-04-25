@@ -64,7 +64,7 @@ class ModelParams(ParamGroup):
 class PipelineParams(ParamGroup):
     def __init__(self, parser):
         self.convert_SHs_python = True
-        self.irradiance_model = "env_sg"  # sh/env_sg
+        self.irradiance_model = "sg_env"  # sh/sg/env_sg
         self.compute_cov3D_python = False
         self.debug = False
         super().__init__(parser, "Pipeline Parameters")

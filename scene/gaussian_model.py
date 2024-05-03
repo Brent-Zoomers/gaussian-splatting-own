@@ -51,6 +51,7 @@ class GaussianModel:
         self._features_sg = torch.empty(0)
         self._features_diff = torch.empty(0)
         self._features_spec = torch.empty(0)
+        self._env_map = torch.empty(0)
 
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
@@ -73,6 +74,7 @@ class GaussianModel:
             self._features_sg,
             self._features_diff,
             self._features_spec,
+            self._env_map,
 
             self._scaling,
             self._rotation,
@@ -93,6 +95,7 @@ class GaussianModel:
         self._features_sg,
         self._features_diff,
         self._features_spec,
+        self.env_map,
 
         self._scaling, 
         self._rotation, 
@@ -138,6 +141,10 @@ class GaussianModel:
         return self._features_spec
     
     @property
+    def get_env_map(self):
+        return self._env_map
+    
+    @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
     
@@ -167,8 +174,16 @@ class GaussianModel:
 
         # Diffuse + Specular 
 
-        features_diff = torch.zeros((fused_color.shape[0], 3, 1)).float().cuda() + 0.5
-        features_spec = torch.zeros((fused_color.shape[0], 3, 2)).float().cuda() + 0.5
+        features_diff = fused_color
+        features_spec = torch.zeros((fused_color.shape[0], 4)).float().cuda() + 0.5
+        features_spec[...,3] = 1
+
+        num_lobes = 2
+
+        env_map = torch.rand((num_lobes,7)).float().cuda()
+        env_map[...,[3,4,5]] = -2
+        env_map[...,6] = 20.0
+
 
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
@@ -187,11 +202,15 @@ class GaussianModel:
         self._features_sg = nn.Parameter(features_sg.contiguous().requires_grad_(True))
         self._features_diff = nn.Parameter(features_diff.contiguous().requires_grad_(True))
         self._features_spec = nn.Parameter(features_spec.contiguous().requires_grad_(True))
+        self._env_map =  nn.Parameter(env_map.contiguous().requires_grad_(True))
+      
 
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -205,6 +224,7 @@ class GaussianModel:
             {'params': [self._features_sg], 'lr': training_args.feature_lr, "name": "f_sg"},
             {'params': [self._features_diff], 'lr': training_args.feature_lr, "name": "f_diff"},
             {'params': [self._features_spec], 'lr': training_args.feature_lr, "name": "f_spec"},
+            {'params': [self._env_map], 'lr': training_args.feature_lr * 20, "name": "env_map"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
@@ -308,6 +328,8 @@ class GaussianModel:
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            if group["name"] == "env_map":
+                continue
             if group["name"] == name:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
                 stored_state["exp_avg"] = torch.zeros_like(tensor)
@@ -323,6 +345,8 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            if group["name"] == "env_map":
+                continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
@@ -349,7 +373,7 @@ class GaussianModel:
         self._features_sg = optimizable_tensors["f_sg"]
         self._features_diff = optimizable_tensors["f_diff"]
         self._features_spec = optimizable_tensors["f_spec"]
-
+        
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
@@ -362,6 +386,8 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            if group["name"] == "env_map":
+                continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
             stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -401,6 +427,7 @@ class GaussianModel:
         self._features_diff = optimizable_tensors["f_diff"]
         self._features_spec = optimizable_tensors["f_spec"]
         
+        
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
@@ -429,9 +456,9 @@ class GaussianModel:
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
 
         new_features_sg = self._features_sg[selected_pts_mask].repeat(N,1,1)
-        new_features_diff = self._features_diff[selected_pts_mask].repeat(N,1,1)
-        new_features_spec = self._features_spec[selected_pts_mask].repeat(N,1,1)
-
+        new_features_diff = self._features_diff[selected_pts_mask].repeat(N,1)
+        new_features_spec = self._features_spec[selected_pts_mask].repeat(N,1)
+        
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_features_sg, new_features_diff, new_features_spec, new_opacity, new_scaling, new_rotation)

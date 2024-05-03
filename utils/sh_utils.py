@@ -81,37 +81,62 @@ def calculate_inner_product(g1, g2):
 
 def eval_sg_env(diff, spec, env_map, dirs, normals):
     """
-    diff: Nx3x1 --> alpha
+    diff: Nx3x2 --> alpha
     spec: Nx3x2 -> alpha, lambda
-    env_map: Mx3x1 --> alpha
+    env_map: Mx7 --> alpha, lambda, dir
     dirs: Kx3
     normals: Nx3
 
     out: Nx3
     """
-
-    # Diff
+    normals = normals / torch.norm(normals, dim=1, keepdim=True)
+    env_dirs = env_map[...,0:3] / torch.norm(env_map[...,0:3], dim=0)
+    env_alphas = torch.sigmoid(env_map[...,3:6])
+    env_lambdas = env_map[...,6]
+    dirs = -dirs / torch.norm(dirs, dim=0)
+    # Diffuse part
 
     # Point toward normal with lambda static and alpha taken from {diff}
+   
+    splat_alphas = torch.sigmoid(diff[...,0:3])
+    splat_lambdas = torch.ones((splat_alphas.shape[0])).cuda().float() * 0.1
 
-    diff_expanded = diff.squeeze().unsqueeze(1).repeat(1,1,1) # NxMx3x1
-    
-    # constant * Nx3 + constant * 1x3
-    normals = normals.unsqueeze(1)
-    d_m = 0.1 * normals + 0.1 * torch.tensor([0,1,0]).cuda().float()
-    lambda_m = 0.1 + 0.1
+    expanded_splat_lambdas = splat_lambdas.unsqueeze(1).repeat(1,env_lambdas.shape[0])
 
-    # Nx3x1 * Mx3x1 * (Nx3 - constant - Nx3 - constant) / Nx3
+    lambda_m = expanded_splat_lambdas + env_lambdas
 
-    res1 = torch.exp(d_m-lambda_m) - torch.exp(-d_m-lambda_m)
-    
-    result = 2 * torch.pi * diff_expanded * env_map.squeeze(2) * ((res1) / (d_m))
+    l1mulmu1 = (splat_lambdas.unsqueeze(1) * normals).unsqueeze(1).repeat(1,env_lambdas.shape[0],1)
+
+    d_m = torch.norm(l1mulmu1 + env_lambdas.unsqueeze(1)*env_dirs, dim=2)
+
+    expanded_alphas = splat_alphas.unsqueeze(1).repeat(1,env_lambdas.shape[0],1)
+
+    fraction = (torch.exp(d_m - lambda_m) - torch.exp(-d_m-lambda_m)) / d_m
+    result = 2*torch.pi*expanded_alphas*env_alphas * fraction.unsqueeze(2)
+
+    # Specular part
+
+    # spec_splat_alphas = spec[...,0:3]
+    # spec_splat_lambdas = spec[...,3]
+
+    # # Calc mu of lobe as mirror of input around normal
+
+    # mirrored = dirs - 2* torch.sum(dirs*normals) * normals
+
+    # spec_expanded_splat_lambdas = spec_splat_lambdas.unsqueeze(1).repeat(1,env_lambdas.shape[0])
+
+    # spec_lambda_m = spec_expanded_splat_lambdas + env_lambdas
+
+    # spec_l1mulmu1 = (spec_splat_lambdas.unsqueeze(1) * mirrored).unsqueeze(1).repeat(1,env_lambdas.shape[0],1)
+
+    # spec_d_m = torch.norm(spec_l1mulmu1 + env_lambdas.unsqueeze(1)*env_dirs, dim=2)
+
+    # spec_expanded_alphas = spec_splat_alphas.unsqueeze(1).repeat(1,env_lambdas.shape[0],1)
+
+    # spec_fraction = (torch.exp(spec_d_m - spec_lambda_m) - torch.exp(-spec_d_m-spec_lambda_m)) / spec_d_m
+    # spec_result = 2*torch.pi*spec_expanded_alphas*env_alphas * spec_fraction.unsqueeze(2)
 
     return torch.sigmoid(torch.sum(result, dim=1))
-    
-
-
-
 
 # N x 3 x 5
 def eval_sg(params, dirs):

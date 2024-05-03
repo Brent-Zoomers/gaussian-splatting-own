@@ -22,6 +22,9 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from torch import nn
+from spherical_gaussian import SphericalGaussian
+import cv2
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -33,6 +36,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
+
+  
+
+
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -55,6 +62,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             try:
                 net_image_bytes = None
                 custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
+                pipe.convert_SHs_python = True
                 if custom_cam != None:
                     net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
@@ -83,6 +91,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
+        # print(pipe.convert_SHs_python)
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
@@ -95,6 +104,50 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         iter_end.record()
 
         with torch.no_grad():
+
+            # Check env_map
+
+            env_map = gaussians.get_env_map
+
+            result = torch.zeros((500,800,3)).cuda()
+
+            for env in env_map:
+                env_dir = env[0:3] / env[0:3].norm()
+                env_a1 = env[3]
+                env_a2 = env[4]
+                env_a3 = env[5]
+                env_lambda = env[6]
+
+                sg1 = SphericalGaussian(env_a1, env_lambda, env_dir )
+                sg2 = SphericalGaussian(env_a2, env_lambda, env_dir )
+                sg3 = SphericalGaussian(env_a3, env_lambda, env_dir )
+
+                result1 = sg1.to_equirectangular(800, 500)
+                result2 = sg2.to_equirectangular(800, 500)
+                result3 = sg3.to_equirectangular(800, 500)
+
+                result += torch.cat((result1,result2, result3), dim=2)
+
+
+
+            # gaussian_parameters = [[0.5,50,0,0,-1],[0.5, 2000, 1,0,0],[1, 20, 1,1,0],[0.1, 0.1, 0,0,-1]]
+            # result = torch.zeros((500,800,1))
+
+            # for element in gaussian_parameters:
+            #     normmalized_dirs = torch.tensor(element[2:5]).float() / torch.tensor(element[2:5]).float().norm()
+            #     sg = SphericalGaussian(element[0], element[1], normmalized_dirs   )
+
+            #     result += sg.to_equirectangular(800, 500)
+
+            if (iteration-1) % 500 == 0:
+                result *= 255.0
+                np_result = result.cpu().int().numpy()
+                cv2.imwrite(f'env_maps/{iteration-1}.jpg', np_result)
+                # cv2.imshow("result", np_result)
+                # cv2.waitKey()
+
+                
+
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             if iteration % 10 == 0:

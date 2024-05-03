@@ -14,6 +14,10 @@ import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh, eval_sg, eval_sg_env
+from utils.general_utils import build_rotation
+
+
+# env_map = torch.ones((1,3,1)).cuda().float()
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
@@ -84,8 +88,21 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             if pipe.irradiance_model == "sg_env":
                 sg_diff = pc.get_features_diff
                 sg_spec = pc.get_features_spec
-                env_map, normals = torch.rand((1,3,1)).cuda().float(),torch.rand((pc.get_features.shape[0],3)).cuda().float()
-                sgenv2rgb = eval_sg_env(sg_diff, sg_spec, env_map, dir_pp_normalized, normals)
+                # normals = torch.rand((pc.get_features.shape[0],3)).cuda().float()
+
+                # Create cov to find eigenvectors -> smallest is normal
+
+                rotation_quats = pc.get_rotation.clone()
+
+                rotation_matrices = build_rotation(rotation_quats)
+
+                scalings = pc.get_scaling
+
+                smallest_axis_idx = scalings.min(dim=-1)[1][..., None, None].expand(-1, 3, -1)
+                normals_ = rotation_matrices.gather(2, smallest_axis_idx)
+                normals_ = -normals_.squeeze(dim=2)
+
+                sgenv2rgb = eval_sg_env(sg_diff, sg_spec, pc.get_env_map, dir_pp_normalized, normals_)
                 colors_precomp = torch.clamp_min(sgenv2rgb + 0.5, 0.0)
             
                 

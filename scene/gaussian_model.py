@@ -204,7 +204,6 @@ class GaussianModel:
         self._features_spec = nn.Parameter(features_spec.contiguous().requires_grad_(True))
         self._env_map =  nn.Parameter(env_map.contiguous().requires_grad_(True))
       
-
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))

@@ -1,0 +1,20 @@
+Processing c:\users\bzoomers\desktop\gaussian-splatting-own\submodules\diff-gaussian-rasterization
+  Preparing metadata (setup.py): started
+  Preparing metadata (setup.py): finished with status 'done'
+Building wheels for collected packages: diff_gaussian_rasterization
+  Building wheel for diff_gaussian_rasterization (setup.py): started
+  Building wheel for diff_gaussian_rasterization (setup.py): finished with status 'error'
+  Running setup.py clean for diff_gaussian_rasterization
+Failed to build diff_gaussian_rasterization
+Installing collected packages: diff_gaussian_rasterization
+  Attempting uninstall: diff_gaussian_rasterization
+    Found existing installation: diff_gaussian_rasterization 0.0.0
+    Uninstalling diff_gaussian_rasterization-0.0.0:
+      Successfully uninstalled diff_gaussian_rasterization-0.0.0
+  Running setup.py install for diff_gaussian_rasterization: started
+  Running setup.py install for diff_gaussian_rasterization: finished with status 'error'
+  Rolling back uninstall of diff_gaussian_rasterization
+  Moving to c:\users\bzoomers\appdata\local\anaconda3\envs\gaussian_splatting\lib\site-packages\diff_gaussian_rasterization-0.0.0.dist-info\
+   from c:\users\bzoomers\appdata\local\anaconda3\envs\gaussian_splatting\lib\site-packages\~iff_gaussian_rasterization-0.0.0.dist-info
+  Moving to c:\users\bzoomers\appdata\local\anaconda3\envs\gaussian_splatting\lib\site-packages\diff_gaussian_rasterization\
+   from c:\users\bzoomers\appdata\local\anaconda3\envs\gaussian_splatting\lib\site-packages\~iff_gaussian_rasterization

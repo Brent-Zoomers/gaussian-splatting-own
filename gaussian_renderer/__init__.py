@@ -114,7 +114,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # size is #Gx3
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    rendered_image, radii, contr_per_pixel, ids_per_pixel = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -123,6 +123,14 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
+    
+    
+    flattened = torch.flatten(ids_per_pixel)
+    values, counts = flattened.unique(return_counts=True)
+
+    largest_values, largest_indices = torch.topk(counts, k=10)
+
+    print(largest_indices, opacity[largest_indices])
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.

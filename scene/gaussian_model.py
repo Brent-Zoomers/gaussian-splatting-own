@@ -20,7 +20,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
-
+import envmap.envmap
 class GaussianModel:
 
     def setup_functions(self):
@@ -186,6 +186,10 @@ class GaussianModel:
 
 
 
+        env_map = envmap.envmap.load_envmap("env.pt")
+
+
+
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
@@ -202,7 +206,8 @@ class GaussianModel:
         self._features_sg = nn.Parameter(features_sg.contiguous().requires_grad_(True))
         self._features_diff = nn.Parameter(features_diff.contiguous().requires_grad_(True))
         self._features_spec = nn.Parameter(features_spec.contiguous().requires_grad_(True))
-        self._env_map =  nn.Parameter(env_map.contiguous().requires_grad_(True))
+        # self._env_map =  nn.Parameter(env_map.contiguous().requires_grad_(True))
+        self._env_map =  env_map.contiguous().requires_grad_(True)
       
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))

@@ -10,3 +10,5 @@ tandt_db
 viewers
 datasets
 renders
+*.pt
+envmap

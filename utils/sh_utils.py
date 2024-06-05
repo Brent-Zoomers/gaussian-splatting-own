@@ -139,7 +139,7 @@ def eval_sg_env(diff, spec, env_map, dirs, normals):
     return torch.sigmoid(torch.sum(result, dim=1))
 
 # N x 3 x 5
-def eval_sg(params, dirs):
+def eval_sg(params, dirs, env_map):
     
     alphas = params[...,0]
     lambdas = params[...,1]

@@ -16,7 +16,7 @@ from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh, eval_sg, eval_sg_env
 from utils.general_utils import build_rotation
 
-
+iteration = 0
 # env_map = torch.ones((1,3,1)).cuda().float()
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
@@ -83,7 +83,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
             if pipe.irradiance_model == "sg":
                 sgs_view = pc.get_features_sg
-                sg2rgb = eval_sg(sgs_view, dir_pp_normalized)
+                sg2rgb = eval_sg(sgs_view, dir_pp_normalized, pc.get_env_map)
                 colors_precomp = torch.clamp_min(sg2rgb + 0.5, 0.0)
             if pipe.irradiance_model == "sg_env":
                 sg_diff = pc.get_features_diff
@@ -124,13 +124,66 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
     
+    # x_indices = torch.arange(100)
+    # y_indices = torch.arange(100)
+
+    # # Create a mesh grid of all combinations of x and y indices
+    # mesh_grid = torch.meshgrid(x_indices, y_indices)
+
+    # # Stack the x and y coordinates into a single tensor
+    # pixel_combinations = torch.stack((mesh_grid[0].flatten(), mesh_grid[1].flatten()), dim=1)
+    # W = int(viewpoint_camera.image_width)
+    # y = torch.tensor([x[0]*W + x[1] for x in pixel_combinations])
+
+    # # final_ids = torch.cat([ids_per_pixel[z.item()*20:z.item()*20+20] for z in y])
     
-    flattened = torch.flatten(ids_per_pixel)
+    flattened = ids_per_pixel[0:20]
     values, counts = flattened.unique(return_counts=True)
 
-    largest_values, largest_indices = torch.topk(counts, k=10)
+    # largest_values, largest_indices = torch.topk(counts, k=500)
+    # print(torch.max(values), means3D.shape)
+    rendered_image_largest, radii_, contr_per_pixel, ids_per_pixel = rasterizer(
+        means3D = means3D[values],
+        means2D = means2D[values],
+        shs = shs,
+        colors_precomp = colors_precomp[values],
+        opacities = opacity[values],
+        scales = scales[values],
+        rotations = rotations[values],
+        cov3D_precomp = cov3D_precomp)
+    
+    # smallest_values, largest_indices_ = torch.topk(counts, k=500, largest=False)
 
-    print(largest_indices, opacity[largest_indices])
+    # largest_indices = largest_indices_
+
+    # rendered_image_smallest, radii_, contr_per_pixel, ids_per_pixel = rasterizer(
+    #     means3D = means3D[largest_indices],
+    #     means2D = means2D[largest_indices],
+    #     shs = shs,
+    #     colors_precomp = colors_precomp[largest_indices],
+    #     opacities = opacity[largest_indices],
+    #     scales = scales[largest_indices],
+    #     rotations = rotations[largest_indices],
+    #     cov3D_precomp = cov3D_precomp)
+
+    from torchvision import transforms
+    import cv2
+    import numpy as np
+    # # Create a transform to convert the tensor to a PIL image
+    transform = transforms.ToPILImage()
+
+    # # Convert the tensor to a PIL image
+    img_l = transform(rendered_image_largest)
+    # img_s = transform(rendered_image_smallest)
+
+    # # Display the image (requires an external library like matplotlib or OpenCV)
+    # img_l.show()  # Using matplotlib
+    # # Alternatively, use OpenCV for display:
+    # global iteration
+    # iteration = iteration+1
+    # if iteration % 500 == 0:
+    #     cv2.imshow("Image_l", cv2.cvtColor(np.array(img_l), cv2.COLOR_BGR2RGB))
+    #     cv2.waitKey(0)
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.

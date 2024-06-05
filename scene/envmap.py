@@ -1,6 +1,2 @@
-# import torch
 
-
-
-# class GaussianModel:
 

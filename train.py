@@ -107,26 +107,28 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Check env_map
 
-            env_map = gaussians.get_env_map
+            if pipe.irradiance_model == "sg_env":
 
-            result = torch.zeros((500,800,3)).cuda()
+                env_map = gaussians.get_env_map
 
-            for env in env_map:
-                env_dir = env[0:3] / env[0:3].norm()
-                env_a1 = env[3]
-                env_a2 = env[4]
-                env_a3 = env[5]
-                env_lambda = env[6]
+                result = torch.zeros((500,800,3)).cuda()
 
-                sg1 = SphericalGaussian(env_a1, env_lambda, env_dir )
-                sg2 = SphericalGaussian(env_a2, env_lambda, env_dir )
-                sg3 = SphericalGaussian(env_a3, env_lambda, env_dir )
+                for env in env_map:
+                    env_dir = env[0:3] / env[0:3].norm()
+                    env_a1 = env[3]
+                    env_a2 = env[4]
+                    env_a3 = env[5]
+                    env_lambda = env[6]
 
-                result1 = sg1.to_equirectangular(800, 500)
-                result2 = sg2.to_equirectangular(800, 500)
-                result3 = sg3.to_equirectangular(800, 500)
+                    sg1 = SphericalGaussian(env_a1, env_lambda, env_dir )
+                    sg2 = SphericalGaussian(env_a2, env_lambda, env_dir )
+                    sg3 = SphericalGaussian(env_a3, env_lambda, env_dir )
 
-                result += torch.cat((result1,result2, result3), dim=2)
+                    result1 = sg1.to_equirectangular(800, 500)
+                    result2 = sg2.to_equirectangular(800, 500)
+                    result3 = sg3.to_equirectangular(800, 500)
+
+                    result += torch.cat((result1,result2, result3), dim=2)
 
 
 
@@ -139,10 +141,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             #     result += sg.to_equirectangular(800, 500)
 
-            if (iteration-1) % 500 == 0:
-                result *= 255.0
-                np_result = result.cpu().int().numpy()
-                cv2.imwrite(f'env_maps/{iteration-1}.jpg', np_result)
+            # if (iteration-1) % 500 == 0:
+            #     result *= 255.0
+            #     np_result = result.cpu().int().numpy()
+            #     cv2.imwrite(f'env_maps/{iteration-1}.jpg', np_result)
                 # cv2.imshow("result", np_result)
                 # cv2.waitKey()
 

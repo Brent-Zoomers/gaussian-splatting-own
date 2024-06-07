@@ -8,3 +8,7 @@ tensorboard_3d
 screenshots
 tandt_db
 viewers
+*.pt
+renders
+datasets
+envmap

@@ -54,6 +54,7 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
+        self.sample_random_cameras_amount = 0.5 # 0-1 percentage of images used randonly sampled
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

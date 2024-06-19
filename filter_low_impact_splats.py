@@ -21,6 +21,8 @@ from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 import time
+import timeit
+import shutil
 
 timings = []
 
@@ -32,22 +34,23 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     makedirs(gts_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        start_time = time.time()
+        # start_time = time.time()
         rendering = render(view, gaussians, pipeline, background)["render"]
-        end_time = time.time()
-        elapsed_time_ms = (end_time - start_time) * 1000
-        timings.append(elapsed_time_ms)
+        # end_time = time.time()
+        # elapsed_time_ms = (end_time - start_time) * 1000
+        # timings.append(elapsed_time_ms)
 
         gt = view.original_image[0:3, :, :]
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool,am=0):
+    
     with torch.no_grad():
-        dataset.model_path = f'output/combined_random'
+        # dataset.model_path = f'output/combined_random'
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
-
+        start_time = time.time()
         
         # Determine useful/useless splats to be removed
 
@@ -59,37 +62,61 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         x = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda')
+        total_contr = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda')
+        total_occ = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda')
 
-
+        xx = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda')
         # Work using score
 
         # amount contributed * (max contribution)
 
+        ################################## 
         for camera in cameras:
-            # Render to camera
+        #     # Render to camera
             render_pkg = render(camera, gaussians, pipeline, background)
-            gt_image = camera.original_image.cuda()
+        #     gt_image = camera.original_image.cuda()
 
-            num_gaussians_per_pixel = 20
+        #     num_gaussians_per_pixel = 20
 
-            # l1loss_per_pixel = torch.abs(render_pkg["render"] - gt_image).sum(dim=0, keepdim=True).repeat(num_gaussians_per_pixel,1,1).flatten()
+        #     # l1loss_per_pixel = torch.abs(render_pkg["render"] - gt_image).sum(dim=0, keepdim=True).repeat(num_gaussians_per_pixel,1,1).flatten()
             
-            # for each pixel weight depending on loss/contribution
+        #     # for each pixel weight depending on loss/contribution
             ids_per_pixel = render_pkg["ids_per_pixel"]
             contr_per_pixel = render_pkg["contr_per_pixel"]
 
-            #(pix_id*NUM_GAUSSIANS_CONTRIBUTING)+index
-            # uint32_t pix_id = W * pix.y + pix.x;
+            per_pixel_reshaped = ids_per_pixel.view((camera.image_width, camera.image_height,20))
+
+            most_contributing_per_pixel = per_pixel_reshaped[...,-am]
+        #     #(pix_id*NUM_GAUSSIANS_CONTRIBUTING)+index
+        #     # uint32_t pix_id = W * pix.y + pix.x;
+
+            most_per_pixel = torch.unique(most_contributing_per_pixel.flatten())
 
             y = torch.unique(ids_per_pixel, return_counts=True)
-            # y[1] *= l1loss_per_pixel
+        #     # y[1] *= l1loss_per_pixel
             x[y[0]] += y[1]
-            
+            xx[most_per_pixel] += 1
 
-        mask = x != 0
+            total_contr[ids_per_pixel] += contr_per_pixel
+            total_occ[ids_per_pixel] += 1
+
+
+        ################################## 
+
+        weighted_scale_opacity = -torch.exp(torch.sum(gaussians.get_scaling,dim=1)) / (1 + torch.exp(-gaussians.get_opacity.squeeze()))
+
+        # largest_k_values, largest_k_indices = torch.topk(total_contr*total_occ*gaussians.get_opacity.squeeze(), int(total_contr.shape[0]*(am/10.0)), largest=True)
+        largest_k_values, largest_k_indices = torch.topk(weighted_scale_opacity, int(gaussians.get_opacity.shape[0]*am/10.0), largest=False)
+        # end_time = time.time()
+        # execution_time = end_time - start_time
+        # print("Execution time:", execution_time, "seconds")
+
+        
+        # mask = xx != 0
+        mask = largest_k_indices
 
         # Remove the elements corresponding to the indices using boolean indexing
-        gaussians._opacity = gaussians._opacity[mask]
+        gaussians._opacity = gaussians._opacity[mask] 
         gaussians._xyz = gaussians._xyz[mask]
         gaussians._scaling = gaussians._scaling[mask]
         gaussians._features_dc = gaussians._features_dc[mask]
@@ -97,8 +124,21 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         gaussians._rotation = gaussians._rotation[mask]
         #
 
-        # gaussians.save_ply("output/combined_random_masked/point_cloud/iteration_30000/point_cloud.ply")
+        dataset_name = dataset.model_path.split("/")[-1]
+        output_folder_path = f'output/datasets/{dataset_name}_webv/{am}'
+        folder_path = f'{output_folder_path}/point_cloud/iteration_30000'
+        if not os.path.exists(folder_path):
+                # If the folder does not exist, create it  
+                os.makedirs(folder_path)
+        gaussians.save_ply(folder_path + '/point_cloud.ply')
 
+        # copy files to right folder
+
+        shutil.copy(dataset.model_path+'/cameras.json', output_folder_path)
+        shutil.copy(dataset.model_path+'/cfg_args', output_folder_path)
+
+
+       
         # bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         # background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -125,7 +165,8 @@ if __name__ == "__main__":
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
-
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
+    for i in range(1, 6, 1):
+        value = i
+        render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, am=value)
 
     print(np.mean(np.array(timings)))

@@ -22,6 +22,7 @@ from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 import numpy as np
 import copy
+from voxels.voxel_grid import SparseVoxelGrid
 
 """"
 @input : Nx3
@@ -104,11 +105,11 @@ def render_indices(scene, gaussians, dataset, indices):
     gaussians._rotation = clone_rotation
 
 
+def create_voxel_grid():
+    pass
 
 
-
-
-def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
+def calculate_features(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     #debug
 
     # x = torch.tensor([[1,2],[2,1]], dtype=torch.float32)
@@ -123,43 +124,44 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
 
-        # ac_cov = gaussians.get_actual_covariance()
-
-        # values, vectors = torch.linalg.eig(ac_cov[50000])
-
-        # real_values, real_vectors = torch.real(values), torch.real(vectors)
-        # real_scaled_vectors = real_values.unsqueeze(1) * real_vectors
-
         points = gaussians.get_xyz
+        # Create voxel grid with N dimensions in each direction NxNxN
+        dvg = SparseVoxelGrid(points,  10, True)
+
+        # Precalculate eigenvectors for all Gaussians
         actual_covs = gaussians.get_actual_covariance()
-        for point in points:
-            point = points[800000]
-            # calculate distance to all other points
-            distances = torch.cdist(point.unsqueeze(0), points)
-            values, indices = torch.topk(distances, 5000, largest=False)
+        eigenvalues, eigenvectors = torch.linalg.eig(actual_covs)
 
-            # render_indices(scene, gaussians, dataset, indices.squeeze())
+        real_eigenvectors = torch.real(eigenvectors)
 
-            actual_covs_indexed = actual_covs[indices[0]]
-            eigenvalues, eigenvectors = torch.linalg.eig(actual_covs_indexed)
+        # 0 to only take largest eigenvector into consideration
+        polar_coordinates = cartesian2polar(real_eigenvectors[:,0,:])
 
-            real_eigenvectors = torch.real(eigenvectors)
+        phi = polar_coordinates[...,0]
+        theta = polar_coordinates[...,1]
 
-            # 0 to only take largest eigenvector into consideration
-            polar_coordinates = cartesian2polar(real_eigenvectors[:,0,:])
+        # Count density in voxel grid to determine interesting voxels
+        occurances = torch.zeros((10,10,10)).cuda().int()
+        for i in range(10):
+            for j in range(10):
+                for k in range(10):
+                    occurances[i][j][k] = dvg.get_points_at_indices(i, j, k).shape[0]
+                    # print(i,j,k,occurances[i][j][k].shape)
 
-            phi = polar_coordinates[...,0]
-            theta = polar_coordinates[...,1]
+        interesting_voxels = (torch.max(occurances)*0.1 < occurances).nonzero()
 
+        for voxel in interesting_voxels:
+            indices=dvg.get_points_at_tensor(voxel)
             AMOUNT_BUCKETS = 72
-
-            phi_bucketized = torch.bucketize(phi.flatten(), torch.linspace(0, torch.pi, AMOUNT_BUCKETS).cuda())
-            theta_bucketized = torch.bucketize(theta.flatten(), torch.linspace(-torch.pi, torch.pi, AMOUNT_BUCKETS).cuda())
+            # get histogram for cell
+            phi_bucketized = torch.bucketize(phi[indices].flatten(), torch.linspace(0, torch.pi, AMOUNT_BUCKETS).cuda())
+            theta_bucketized = torch.bucketize(theta[indices].flatten(), torch.linspace(-torch.pi, torch.pi, AMOUNT_BUCKETS).cuda())
 
             bin_indices = theta_bucketized * AMOUNT_BUCKETS + phi_bucketized
-
+           
             histogram = torch.bincount(bin_indices, minlength=AMOUNT_BUCKETS * AMOUNT_BUCKETS)
 
+            # Calculate descriptor per voxel
             max_idx = torch.argmax(histogram)
 
             mask = bin_indices == max_idx
@@ -173,10 +175,10 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
             # Convert directions back to xyz
             
-            phi = interesting_mask % AMOUNT_BUCKETS
-            theta = (interesting_mask-phi) / AMOUNT_BUCKETS
+            rev_phi = interesting_mask % AMOUNT_BUCKETS
+            rev_theta = (interesting_mask-rev_phi) / AMOUNT_BUCKETS
 
-            interesting_polar_cors = torch.stack((phi, theta)).squeeze(-1)
+            interesting_polar_cors = torch.stack((rev_phi, rev_theta)).squeeze(-1)
 
             interesting_cartesian_cors = polar2cartesian(interesting_polar_cors)
 
@@ -184,16 +186,61 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
             feature_vector = interesting_cartesian_cors.flatten()
 
+            print("feature_vector", feature_vector)
+
+
+        print("DEBUG")
+        
+        # Calculate per point descriptor
+        # for point in points:
+        #     # point = points[800000]
+        #     # calculate distance to all other points
+        #     distances = torch.cdist(point.unsqueeze(0), points)
+        #     values, indices = torch.topk(distances, 5000, largest=False)
+
+        #     # render_indices(scene, gaussians, dataset, indices.squeeze())
+
+        #     # actual_covs_indexed = actual_covs[indices[0]]
+
+        #     AMOUNT_BUCKETS = 72
+
+        #     phi_bucketized = torch.bucketize(phi[indices].flatten(), torch.linspace(0, torch.pi, AMOUNT_BUCKETS).cuda())
+        #     theta_bucketized = torch.bucketize(theta[indices].flatten(), torch.linspace(-torch.pi, torch.pi, AMOUNT_BUCKETS).cuda())
+
+        #     bin_indices = theta_bucketized * AMOUNT_BUCKETS + phi_bucketized
+           
+        #     histogram = torch.bincount(bin_indices, minlength=AMOUNT_BUCKETS * AMOUNT_BUCKETS)
+
+        #     max_idx = torch.argmax(histogram)
+
+        #     mask = bin_indices == max_idx
+
+        #     # only render splats that are in this bin
+        #     # render_indices(scene, gaussians, dataset, indices.squeeze()[mask])
+            
+        #     # Find possible features
+        #     # Mask of main directions
+        #     interesting_mask = torch.nonzero(histogram >= histogram[max_idx]*0.8)
+
+        #     # Convert directions back to xyz
+            
+        #     phi = interesting_mask % AMOUNT_BUCKETS
+        #     theta = (interesting_mask-phi) / AMOUNT_BUCKETS
+
+        #     interesting_polar_cors = torch.stack((phi, theta)).squeeze(-1)
+
+        #     interesting_cartesian_cors = polar2cartesian(interesting_polar_cors)
+
+        #     gaussians.get_features[:,0,:]
+
+        #     feature_vector = interesting_cartesian_cors.flatten()
+
 
             # torch.bincount(phi_bucketized)
             # torch.bincount(theta_bucketized)
 
-
-
         print(f'DEBUG')
 
-
-       
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -210,4 +257,4 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
+    calculate_features(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)

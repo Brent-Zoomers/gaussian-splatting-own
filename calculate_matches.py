@@ -155,29 +155,35 @@ def calculate_features(dataset : ModelParams, iteration : int, pipeline : Pipeli
         # Initialize point cloud data
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
+        
 
         # Create voxel grid with N dimensions in each direction NxNxN
         voxel_dims = 80 # TODO Change from this to hardcoded.
         points = gaussians.get_xyz
         dvg = SparseVoxelGrid(points,  voxel_dims, True)
 
-        # Precalculate eigenvectors for all Gaussians
+        # Precompute eigenvectors for all Gaussians
         actual_covs = gaussians.get_actual_covariance()
         _, real_eigenvectors = calculate_real_eigenvectors(actual_covs)
         
-        # 0 to only take largest eigenvector into consideration
-        polar_coordinates = cartesian2polar(real_eigenvectors[:,0,:])
+        # 2 to only take smallest eigenvector into consideration
+        polar_coordinates = cartesian2polar(real_eigenvectors[:,2,:])
         phi = polar_coordinates[...,0]
         theta = polar_coordinates[...,1]
+
+        # import test_plot_histogram
+        # test_plot_histogram.plot_data(real_eigenvectors[:,2,:].cpu().numpy())
+
+
+        ##################################################################
+        create_descriptor(points[50000], points, phi, theta, real_eigenvectors)
+
+        ##################################################################
 
         # Count density in voxel grid to determine interesting voxels
         occurances = dvg.get_all_occurances()
         interesting_voxels = (torch.max(occurances)*0.1 < occurances).nonzero()
-        #####################################################################################
-
-        # TODO Verify whether they correspond to regions of interest
-        # TODO Only consider voxels where distribution has 3 clear distinct peaks
-        
+        #####################################################################################       
         # Calculate occurances of direction of largest eigenvector
         indices=dvg.get_points_at_tensor(interesting_voxels[0])
         AMOUNT_BUCKETS = 72
@@ -246,6 +252,52 @@ def calculate_features(dataset : ModelParams, iteration : int, pipeline : Pipeli
 
         # return features_tensor, voxel_data
 
+def filter_points():
+    pass
+
+
+
+
+def create_descriptor(point_tensor, xyz, phis, thetas, real_eigenvectors):
+
+    AMOUNT_BUCKETS = 72
+
+    ## Orientation Assignment
+
+    # Find N closest points
+    distances = torch.cdist(point_tensor.unsqueeze(0), xyz).squeeze()
+
+    # TODO Account for scale
+    # Find all points within range
+    mask = (distances < distances.min() + 0.1).nonzero().squeeze()
+
+    import test_plot_histogram
+    test_plot_histogram.plot_data(real_eigenvectors[:,2,:][mask].cpu().numpy())
+
+    # Created weighted histogram
+    phi_bucketized = torch.bucketize(phis[mask].flatten(), torch.linspace(0, torch.pi, AMOUNT_BUCKETS).cuda())
+    theta_bucketized = torch.bucketize(thetas[mask].flatten(), torch.linspace(-torch.pi, torch.pi, AMOUNT_BUCKETS).cuda())
+    bin_indices = theta_bucketized * AMOUNT_BUCKETS + phi_bucketized
+    histogram = torch.bincount(bin_indices, minlength= AMOUNT_BUCKETS*AMOUNT_BUCKETS)
+
+    max_indices = histogram.argmax()
+    max_value = histogram[max_indices] * 0.8
+
+    peaks = torch.where(histogram >= max_value)
+    
+    # For each peak create discriptor
+    
+    # Take points in grid around point and divide into 8 cubes, each of which will again be used to calculate the histogram
+
+    x_edges = torch.linspace(point_tensor[0]-0.5, point_tensor[0]+0.5, 3)
+    y_edges = torch.linspace(point_tensor[1]-0.5, point_tensor[1]+0.5, 3)
+    z_edges = torch.linspace(point_tensor[2]-0.5, point_tensor[2]+0.5, 3)
+
+    
+
+
+
+
 if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Testing script parameters")
@@ -303,3 +355,13 @@ if __name__ == "__main__":
 
 
 
+
+
+"""
+
+Find dominant direction(s)
+Around this direction create 8x8 grid and for each cell calculate histogram
+Concatenate results to from feature descriptor
+
+
+"""

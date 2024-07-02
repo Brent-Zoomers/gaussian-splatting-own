@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from collections import defaultdict
 
-
 class SparseVoxelGrid():
     def __init__(self, xyz, dims, store_indices=True):
         
@@ -82,7 +81,6 @@ class SparseVoxelGrid():
         # print("DEBUG")
             
         
-
     def get_points_at_indices(self,x,y,z):  
         x = (self.dim_per_point == torch.tensor([x,y,z]).cuda()).all(dim=1)
         return torch.nonzero(x).squeeze(1)

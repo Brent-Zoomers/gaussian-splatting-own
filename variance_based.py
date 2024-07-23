@@ -12,6 +12,9 @@ from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 import numpy as np
+import open3d as o3d
+import time
+from render import render_indices
 
 def get_average_color(colors):
     return torch.sum(colors, dim=0) / colors.shape[0]
@@ -23,6 +26,8 @@ def get_variance_color(colors):
 
 def create_descriptor(point, gaussians):
     pass
+
+
 
 def generate_structure(gaussians, levels = 2):
     xyz = gaussians.get_xyz
@@ -57,12 +62,65 @@ def generate_structure(gaussians, levels = 2):
         indices = torch.nonzero(x).squeeze(1)
 
         if torch.sum(torch.abs(get_variance_color(colors[indices]))) > 3 :
-            
+            pass 
   
     return stacked
+
+
+def own_traverse(node, parent=None, max_ancestor_variance=0.0, id_string=""):
+    filtered_colors = np.asarray(point_cloud.colors)[np.asarray(node.indices)]       
+    var_per_channel = np.var(filtered_colors, axis=0)
+    variance = np.sum(var_per_channel)
+
+    max_variance_children = 0.0
+    if not isinstance(node, o3d.geometry.OctreeLeafNode):
+        for idx, child in enumerate(node.children):
+            if child is not None:
+                highest_var = max(max_ancestor_variance, variance)
+                max_variance_children = max(own_traverse(child, node, highest_var, id_string+str(idx)), max_variance_children)
+
+        if variance > max_variance_children and variance > max_ancestor_variance:
+            render_indices(scene, gaussians, dataset, pipeline, torch.tensor(np.asarray(node.indices), dtype=torch.long), f"variance_based_20levels/{id_string}/")
+    
+    
+    if isinstance(node, o3d.geometry.OctreeLeafNode):
+        if variance > max_ancestor_variance:
+            render_indices(scene, gaussians, dataset, pipeline, torch.tensor(np.asarray(node.indices), dtype=torch.long), f"variance_based_20levels/{id_string}/")
+    
+    return max(variance, max_variance_children)
+
     
 
+def f_traverse(node, node_info):
+    early_stop = False
 
+    if isinstance(node, o3d.geometry.OctreeInternalNode):
+        if isinstance(node, o3d.geometry.OctreeInternalPointNode):
+            
+            # point_cloud.points[node.indices]
+            filtered_colors = np.asarray(point_cloud.colors)[np.asarray(node.indices)]       
+            var_per_channel = np.var(filtered_colors, axis=0)
+
+            if np.sum(var_per_channel) > 0.25:
+                print("{}{}: Internal node at depth {}: var {}"
+                      .format('    ' * node_info.depth, node_info.child_index, node_info.depth,np.sum(var_per_channel)))
+           
+            # DEBUG : print out all cells that have variance of one or more and see if they are interesting
+                render_indices(scene, gaussians, dataset, pipeline, torch.tensor(np.asarray(node.indices), dtype=torch.long), f"variance_based/{node_info.depth}_{node_info.child_index}/")
+
+           
+            early_stop = len(node.indices) < 250
+    elif isinstance(node, o3d.geometry.OctreeLeafNode):
+        if isinstance(node, o3d.geometry.OctreePointColorLeafNode):
+            pass
+            # print("{}{}: Leaf node at depth {} has {} points with origin {}".
+                #   format('    ' * node_info.depth, node_info.child_index,
+                        #  node_info.depth, len(node.indices), node_info.origin))
+    else:
+        raise NotImplementedError('Node type not recognized!')
+
+    # early stopping: if True, traversal of children of the current node will be skipped
+    return early_stop
 
 
 if __name__ == "__main__":
@@ -85,6 +143,32 @@ if __name__ == "__main__":
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians, load_iteration=args.iteration, shuffle=False)
 
-    with torch.no_grad():
-        # Generate grid-structure
-        structure = generate_structure(gaussians)
+    # Convert to NumPy array
+    points_numpy = gaussians.get_xyz.cpu().detach().numpy()
+    colors_numpy = (gaussians.get_features[:,0,:] * 0.28209479177387814 + 0.5).cpu().detach().numpy()
+
+    # Step 2: Create an Open3D point cloud from the NumPy array
+    point_cloud = o3d.geometry.PointCloud()
+    point_cloud.points = o3d.utility.Vector3dVector(points_numpy)
+    point_cloud.colors = o3d.utility.Vector3dVector(colors_numpy)
+
+    # Step 3: Create an octree from the point cloud
+    # Define the depth of the octree
+    octree = o3d.geometry.Octree(max_depth=20)
+    octree.convert_from_point_cloud(point_cloud, size_expand=0.01)
+
+    # Visualization (optional)
+    # o3d.visualization.draw_geometries([octree])
+
+    start_time = time.time()
+    octree.traverse(f_traverse)
+    # own_traverse(octree.root_node)
+    end_time = time.time()
+    # print(octree.locate_leaf_node(point_cloud.points[0]))
+    
+
+    # Calculate the execution time
+    execution_time = end_time - start_time
+    print(f"Execution time: {execution_time:.10f} seconds")
+
+

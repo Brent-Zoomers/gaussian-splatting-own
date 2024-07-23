@@ -21,6 +21,37 @@ from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 
+
+def render_indices(scene, gaussians, dataset, pipeline, indices, name=""):
+    
+    bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+    mask = indices.squeeze()
+
+    clone_opacity = gaussians._opacity.clone()
+    clone_xyz = gaussians._xyz.clone()
+    clone_scaling = gaussians._scaling.clone()
+    clone_features_dc = gaussians._features_dc.clone()
+    clone_features_rest = gaussians._features_rest.clone()
+    clone_rotation = gaussians._rotation.clone()
+
+    gaussians._opacity = gaussians._opacity[mask] 
+    gaussians._xyz = gaussians._xyz[mask]
+    gaussians._scaling = gaussians._scaling[mask]
+    gaussians._features_dc = gaussians._features_dc[mask]
+    gaussians._features_rest = gaussians._features_rest[mask]
+    gaussians._rotation = gaussians._rotation[mask]
+
+    render_set(dataset.model_path, name, scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
+
+    gaussians._opacity = clone_opacity
+    gaussians._xyz = clone_xyz
+    gaussians._scaling = clone_scaling 
+    gaussians._features_dc = clone_features_dc
+    gaussians._features_rest = clone_features_rest
+    gaussians._rotation = clone_rotation
+
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")

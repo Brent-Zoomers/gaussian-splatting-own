@@ -16,7 +16,7 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, calculate_real_eigenvectors, normal_to_rgb, check_symmetric, build_rotation
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -86,10 +86,61 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
+        # # Calculate Normals
+        # # Get all gaussians
+        # Get all gaussians
+
+        _, indices = gaussians.get_scaling.min(dim=1)
+        normals = torch.zeros_like(gaussians.get_xyz)
+        normals[torch.arange(gaussians.get_xyz.shape[0]), indices] = 1.0
+
+        rotation_mat = build_rotation(gaussians._rotation)
+        normals_world = torch.bmm(rotation_mat, normals.unsqueeze(2)).squeeze()
+
+        # actual_covariances = gaussians.get_actual_covariance()
+        # eigvals, eigvecs = calculate_real_eigenvectors(actual_covariances)
+        # _, lowest_indices = torch.min(eigvals, dim=1, keepdim=True)
+
+        # expanded_indices = lowest_indices.expand(-1, 3).unsqueeze(1)
+        # smallest_eigenvecs = eigvecs.gather(1, lowest_indices.expand(-1, 3).unsqueeze(1)).squeeze()
+
+        # Gathering the smallest eigenvectors corresponding to the smallest eigenvalues
+        # Ensure eigvecs and indices are correctly shaped and contiguous
+        w2c = viewpoint_cam.world_view_transform.clone()
+        w = torch.ones(normals_world.shape[0], 1).cuda()
+
+        homogemous_vecs_world = torch.cat((normals_world, w), dim=1)
+        w2c[3,0:3] = 0.0
+        vec_end_cam = torch.matmul(homogemous_vecs_world, w2c)
+
+
+        colors = normal_to_rgb(vec_end_cam[...,:3])
+
+
+        # Calculate normals using opacity as 1?
+        normals = render(viewpoint_cam, gaussians, pipe, background, override_color=colors)["render"]
+        gt_normals = viewpoint_cam.normal_image.cuda()
+
+        # with torch.no_grad():
+        #     if iteration % 100 == 0:
+        #         import cv2
+        #         import numpy as np
+        #         numpy_array = normals.permute(1,2,0).cpu().numpy()
+        #         numpy_array1 = gt_normals.permute(1,2,0).cpu().numpy()
+
+        #         cv2.imshow("synth", ((numpy_array)*255).astype(np.uint8))
+        #         cv2.imshow("gt", ((numpy_array1)*255).astype(np.uint8))
+        #         cv2.waitKey()
+
+
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        # Normals loss
+        loss += l1_loss(normals, gt_normals)
+        # Force one scale to be small
+        loss += torch.sum(torch.min(gaussians.get_scaling, dim=1)[0])
         loss.backward()
 
         iter_end.record()
@@ -216,6 +267,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
+    torch.autograd.set_detect_anomaly(True)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 
     # All done

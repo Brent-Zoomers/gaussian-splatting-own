@@ -72,8 +72,23 @@ def strip_lowerdiag(L):
     uncertainty[:, 5] = L[:, 2, 2]
     return uncertainty
 
+def calculate_real_eigenvectors(matrices):
+    # Ensure matrices are symmetric
+    assert matrices.shape[-2:] == (3, 3), "Input must be a batch of 3x3 matrices"
+    
+    # Check for NaNs or Infs
+    if torch.any(torch.isnan(matrices)) or torch.any(torch.isinf(matrices)):
+        raise ValueError("Input contains NaN or Inf values")
+    
+
+    eigenvalues, eigenvectors = torch.linalg.eigh(matrices)
+    return eigenvalues, eigenvectors
+
 def strip_symmetric(sym):
     return strip_lowerdiag(sym)
+
+def check_symmetric(tensor):
+    return torch.allclose(tensor, tensor.transpose(-2, -1))
 
 def build_rotation(r):
     norm = torch.sqrt(r[:,0]*r[:,0] + r[:,1]*r[:,1] + r[:,2]*r[:,2] + r[:,3]*r[:,3])
@@ -131,3 +146,19 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+
+def normal_to_rgb(normal):
+    """ surface normal map to RGB
+        (used for visualization)
+
+        NOTE: x, y, z are mapped to R, G, B
+        NOTE: [-1, 1] are mapped to [0, 255]
+    """
+    # normal_norm = torch.sqrt(torch.sum(normal**2, dim=1))
+    normal_norm = torch.linalg.norm(normal, axis=-1, keepdims=True)
+    normal_norm = torch.clamp(normal_norm, min=1e-12)
+    normal = normal / normal_norm
+
+    normal_rgb = ((normal + 1) * 0.5)
+    return normal_rgb

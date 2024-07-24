@@ -16,23 +16,63 @@ from tqdm import tqdm
 from os import makedirs
 from gaussian_renderer import render
 import torchvision
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, calculate_real_eigenvectors, normal_to_rgb, build_rotation
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
-    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+    normals_path = os.path.join(model_path, name, "ours_{}".format(iteration), "normals")
 
     makedirs(render_path, exist_ok=True)
-    makedirs(gts_path, exist_ok=True)
+    makedirs(normals_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         rendering = render(view, gaussians, pipeline, background)["render"]
-        gt = view.original_image[0:3, :, :]
+
+        _, indices = gaussians.get_scaling.min(dim=1)
+        normals = torch.zeros_like(gaussians.get_xyz)
+        normals[torch.arange(gaussians.get_xyz.shape[0]), indices] = 1.0
+
+        rotation_mat = build_rotation(gaussians._rotation)
+        normals_world = torch.bmm(rotation_mat, normals.unsqueeze(2)).squeeze()
+
+        # actual_covariances = gaussians.get_actual_covariance()
+        # eigvals, eigvecs = calculate_real_eigenvectors(actual_covariances)
+        # _, lowest_indices = torch.min(eigvals, dim=1, keepdim=True)
+
+        # expanded_indices = lowest_indices.expand(-1, 3).unsqueeze(1)
+        # smallest_eigenvecs = eigvecs.gather(1, lowest_indices.expand(-1, 3).unsqueeze(1)).squeeze()
+
+        # Gathering the smallest eigenvectors corresponding to the smallest eigenvalues
+        # Ensure eigvecs and indices are correctly shaped and contiguous
+        w2c = view.world_view_transform.clone()
+        w = torch.ones(normals_world.shape[0], 1).cuda()
+
+        homogemous_vecs_world = torch.cat((normals_world, w), dim=1)
+        w2c[3,0:3] = 0.0
+        vec_end_cam = torch.matmul(homogemous_vecs_world, w2c)
+
+
+        colors = normal_to_rgb(vec_end_cam[...,:3])
+
+
+        # Calculate normals using opacity as 1?
+        normals = render(view, gaussians, pipeline, background, override_color=colors)["render"]
+        # eigen vecs normalizeren
+        # naar juiste coordinaatsysteem zetten
+        
+        # reorder_color = torch.stack((smallest_eigenvecs[...,2],smallest_eigenvecs[...,1],smallest_eigenvecs[...,0]), dim=1)
+        # colors = torch.clamp(normalized_eigvecs_cam, 0, 1)
+
+        # gaussians._opacity[:] = 10.0
+        # Calculate normals using opacity as 1?
+        
+        
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
-        torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(normals, os.path.join(normals_path, '{0:05d}'.format(idx) + ".png"))
+        
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():

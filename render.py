@@ -53,6 +53,12 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         w2c = camera.world_view_transform.clone()
         w = torch.ones(points.shape[0], 1).cuda()
+
+        homogemous_points_world = torch.cat((points, w), dim=1)
+
+        point_in_cam = torch.matmul(homogemous_points_world, w2c)
+
+        
         
         exit()
         

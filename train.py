@@ -16,12 +16,16 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, build_rotation, normal_to_rgb
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from envmap.envmap import EnvMap
+from utils.sg_utils import calculate_colors
+
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -33,6 +37,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
+
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -83,13 +88,62 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        """
+        TODO Compute Gaussian color based using BRDF and Environment map
+
+            Per Gaussian: One Gaussian Lambertian parameters (alpha, lambda) around normal
+        Envmap: Set of SGs with (theta, psi, alpha, lambda)
+        Normals: Add regularization here
+
+        TODO End
+        
+        """
+        # Precompute colors
+
+        # Extract normals
+
+        _, indices = gaussians.get_scaling.min(dim=1)
+        normals = torch.zeros_like(gaussians.get_xyz)
+        normals[torch.arange(gaussians.get_xyz.shape[0]), indices] = 1.0
+
+        rotation_mat = build_rotation(gaussians._rotation)
+        normals_data = torch.bmm(rotation_mat, normals.unsqueeze(2)).squeeze()
+
+        w2c = viewpoint_cam.world_view_transform.clone()
+        w = torch.ones(normals_data.shape[0], 1).cuda()
+
+        homogemous_vecs_world = torch.cat((normals_data, w), dim=1)
+        w2c[3,0:3] = 0.0
+        vec_end_cam = torch.matmul(homogemous_vecs_world, w2c)
+
+
+        gaussian_data = gaussians.get_features_diff
+        envmap_data = gaussians._envmap.get_gaussians
+
+        precomp_colors = calculate_colors(gaussian_data, normals_data, envmap_data)
+
+
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, override_color=precomp_colors)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+    
+        # Normal stuff
+
+        colors = normal_to_rgb(vec_end_cam[...,:3])
+
+
+        # Calculate normals using opacity as 1?
+        normals = render(viewpoint_cam, gaussians, pipe, background, override_color=colors)["render"]
+        gt_normals = viewpoint_cam.normal_image.cuda()
+
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        # Normal loss
+        loss += l1_loss(normals, gt_normals)
+        # Force one scale to be small
+        loss += torch.sum(torch.min(gaussians.get_scaling, dim=1)[0])
         loss.backward()
 
         iter_end.record()
@@ -105,9 +159,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
-            if (iteration in saving_iterations):
-                print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
+            # if (iteration in saving_iterations):
+            #     print("\n[ITER {}] Saving Gaussians".format(iteration))
+            #     scene.save(iteration)
 
             # Densification
             if iteration < opt.densify_until_iter:

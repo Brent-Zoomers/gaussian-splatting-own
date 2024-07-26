@@ -20,6 +20,14 @@ from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+from utils.graphics_utils import fov2focal
+
+# Define a function to project 3D points to 2D image plane using PyTorch
+def project_to_image(points, focal_length_x, focal_length_y, width, height):
+    x = (points[:, 0] * focal_length_x) / points[:, 2] + width / 2
+    y = (points[:, 1] * focal_length_y) / points[:, 2] + height / 2
+    z = points[:, 2]
+    return torch.stack((x, y, z), dim=-1)
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
@@ -35,10 +43,19 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
-    with torch.no_grad():
+    # with torch.no_grad():
+        # torch.set_default_device('cuda')
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
 
+        points = gaussians.get_xyz
+        camera = scene.getTrainCameras()[0]
+
+        w2c = camera.world_view_transform.clone()
+        w = torch.ones(points.shape[0], 1).cuda()
+        
+        exit()
+        
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 

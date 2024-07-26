@@ -9,6 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import matplotlib.cm
 import torch
 from scene import Scene
 import os
@@ -58,8 +59,22 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         point_in_cam = torch.matmul(homogemous_points_world, w2c)
 
-        
-        
+        depth = torch.sqrt(torch.sum(point_in_cam**2,1))
+        # depth = (depth - 0) / (100 - 0)
+
+        depth = depth.unsqueeze(1).repeat(1,3)
+
+        bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        rendering = render(scene.getTrainCameras()[0], gaussians, pipeline, background, override_color=depth)["render"].permute(1,2,0)
+
+
+        import numpy as np
+        import matplotlib
+        import cv2
+        depth_cpu = rendering.detach().cpu().numpy()
+        cv2.imshow("ol", depth_cpu)
+        cv2.waitKey()
         exit()
         
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]

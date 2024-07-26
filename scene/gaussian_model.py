@@ -175,7 +175,7 @@ class GaussianModel:
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity", "per_gaussian": True},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling", "per_gaussian": True},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation", "per_gaussian": True},
-            {'params': [self._envmap.get_gaussians], 'lr': training_args.feature_lr, "name": "envmap", "per_gaussian": False}
+            # {'params': [self._envmap.get_gaussians], 'lr': training_args.feature_lr, "name": "envmap", "per_gaussian": False}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)

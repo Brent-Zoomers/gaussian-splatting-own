@@ -33,7 +33,7 @@ def calculate_colors(gaussian_data, normal_data, envmap_data):
     l_m = g_l + em_l
     alphas = g_a * em_a
 
-    fraction = torch.exp(d_m - l_m) - torch.exp(-d_m-l_m) / (d_m + 1e-10)
+    fraction = (torch.exp(d_m - l_m) - torch.exp(-d_m-l_m)) / (d_m + 1e-10)
 
 
     return torch.sum(2.0 * torch.pi * alphas * fraction, dim=1)

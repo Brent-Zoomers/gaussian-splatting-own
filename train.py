@@ -130,7 +130,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         colors = normal_to_rgb(vec_end_cam[...,:3])
 
-
         # Calculate normals using opacity as 1?
         normals = render(viewpoint_cam, gaussians, pipe, background, override_color=colors)["render"]
         gt_normals = viewpoint_cam.normal_image.cuda()

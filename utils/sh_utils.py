@@ -116,3 +116,25 @@ def RGB2SH(rgb):
 
 def SH2RGB(sh):
     return sh * C0 + 0.5
+
+def spherical_to_cartesian(theta, phi):
+    x = torch.sin(phi) * torch.cos(theta)
+    y = torch.sin(phi) * torch.sin(theta)
+    z = torch.cos(phi)
+    return torch.stack((x, y, z), dim=-1)
+
+
+def eval_sg(deg, sh, dirs):
+    
+    active_gaussians = deg + 1
+
+    mu_ = spherical_to_cartesian(sh[...,:active_gaussians,0], sh[...,:active_gaussians,1])
+    alpha_ = sh[...,:active_gaussians,2:3]
+    lambda_ = torch.sigmoid(sh[...,:active_gaussians,3:4])
+
+    dt = dirs.unsqueeze(1).unsqueeze(1)
+
+    colors = alpha_ * torch.exp(lambda_ * ( torch.sum(dt*mu_, dim=-1, keepdim=True) - 1.0))
+
+    
+    return torch.sum(colors.squeeze(-1), -1)

@@ -16,7 +16,7 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, normal_to_rgb, build_rotation
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -31,7 +31,7 @@ except ImportError:
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(dataset.sh_degree, dataset.sg_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -55,6 +55,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             try:
                 net_image_bytes = None
                 custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
+                pipe.convert_SGs_python = True
                 if custom_cam != None:
                     net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
@@ -71,6 +72,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
+            gaussians.oneupSGdegree()
 
         # Pick a random Camera
         if not viewpoint_stack:
@@ -83,13 +85,66 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
+
+
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+
+        # NORMALS ###
+        _, indices = gaussians.get_scaling.min(dim=1)
+        normals = torch.zeros_like(gaussians.get_xyz)
+        normals[torch.arange(gaussians.get_xyz.shape[0]), indices] = 1.0
+
+        rotation_mat = build_rotation(gaussians._rotation)
+        normals_world = torch.bmm(rotation_mat, normals.unsqueeze(2)).squeeze()
+
+        # Gathering the smallest eigenvectors corresponding to the smallest eigenvalues
+        # Ensure eigvecs and indices are correctly shaped and contiguous
+        w2c = viewpoint_cam.world_view_transform.clone()
+        w = torch.ones(normals_world.shape[0], 1).cuda()
+
+        homogemous_vecs_world = torch.cat((normals_world, w), dim=1)
+        w2c[3,0:3] = 0.0
+        vec_end_cam = torch.matmul(homogemous_vecs_world, w2c)
+
+        colors = normal_to_rgb(vec_end_cam[...,:3])
+
+
+        # Calculate normals using opacity as 1?
+        normals = render(viewpoint_cam, gaussians, pipe, background, override_color=colors)["render"]
+        gt_normals = viewpoint_cam.normal_image.cuda()
+
+
+        # # DEPTH ##################################
+        # points = gaussians.get_xyz
+        
+        # w2c = viewpoint_cam.world_view_transform.clone()
+        # w = torch.ones(points.shape[0], 1).cuda()
+        # homogemous_points_world = torch.cat((points, w), dim=1)
+        # point_in_cam = torch.matmul(homogemous_points_world, w2c)
+        # depth = torch.sqrt(torch.sum(point_in_cam**2,1))
+        # depth = depth.unsqueeze(1).repeat(1,3)
+
+        # bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+        # background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+        # depth_estimation = render(viewpoint_cam, gaussians, pipe, background, override_color=depth)["render"].permute(1,2,0)
+        # depth_gt = viewpoint_cam.depth_image.cuda()
+        # depth_ = (depth_estimation - depth_estimation.min()) / (depth_estimation.max() - depth_estimation.min())
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+        # # Normals loss
+        loss += l1_loss(normals, gt_normals)
+        # # Depth loss
+        # loss += l1_loss(depth_.permute(2,0,1), depth_gt)
+        # Force one scale to be small
+        loss += torch.sum(torch.min(gaussians.get_scaling, dim=1)[0])
+
+
         loss.backward()
 
         iter_end.record()
@@ -108,6 +163,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+             
 
             # Densification
             if iteration < opt.densify_until_iter:
@@ -200,8 +256,8 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[2_000, 15_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[2_000, 15_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)

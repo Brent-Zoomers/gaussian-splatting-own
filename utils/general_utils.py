@@ -131,3 +131,19 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+
+def normal_to_rgb(normal):
+    """ surface normal map to RGB
+        (used for visualization)
+
+        NOTE: x, y, z are mapped to R, G, B
+        NOTE: [-1, 1] are mapped to [0, 255]
+    """
+    # normal_norm = torch.sqrt(torch.sum(normal**2, dim=1))
+    normal_norm = torch.linalg.norm(normal, axis=-1, keepdims=True)
+    normal_norm = torch.clamp(normal_norm, min=1e-12)
+    normal = normal / normal_norm
+
+    normal_rgb = ((normal + 1) * 0.5)
+    return normal_rgb

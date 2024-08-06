@@ -60,7 +60,7 @@ class GaussianModel:
         self.setup_functions()
 
 
-        self._envmap = EnvMap(num_gaussians=10)
+        self._envmap = EnvMap(num_gaussians=4)
 
     def capture(self):
         return (
@@ -141,8 +141,8 @@ class GaussianModel:
 
         # Alpha, Lambda
         features_diff = torch.zeros((fused_color.shape[0], 3, 2)).float().cuda()
-        features_diff[...,1] = 0.0001
-        features_diff[...,0] = 0.5
+        features_diff[...,1] = 0.01
+        features_diff[...,0] = torch.tensor(np.asarray(pcd.colors)).float().cuda()
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
@@ -175,7 +175,7 @@ class GaussianModel:
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity", "per_gaussian": True},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling", "per_gaussian": True},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation", "per_gaussian": True},
-            # {'params': [self._envmap.get_gaussians], 'lr': training_args.feature_lr, "name": "envmap", "per_gaussian": False}
+            {'params': [self._envmap.get_gaussians], 'lr': training_args.feature_lr / 20.0, "name": "envmap", "per_gaussian": False}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
@@ -232,6 +232,12 @@ class GaussianModel:
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
+
+    def static_envmap(self):
+        # for group in self.optimizer.param_groups:
+        #     if group["name"] == "envmap":
+        #         del group["params"]
+        pass
 
     def load_ply(self, path):
         plydata = PlyData.read(path)

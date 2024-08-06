@@ -122,7 +122,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         precomp_colors = calculate_colors(gaussian_data, normals_data, envmap_data)
 
-
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, override_color=precomp_colors)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
     
@@ -134,15 +133,35 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         normals = render(viewpoint_cam, gaussians, pipe, background, override_color=colors)["render"]
         gt_normals = viewpoint_cam.normal_image.cuda()
 
+        # DEPTH ##################################
+        points = gaussians.get_xyz
+
+        w2c = viewpoint_cam.world_view_transform.clone()
+        w = torch.ones(points.shape[0], 1).cuda()
+        homogemous_points_world = torch.cat((points, w), dim=1)
+        point_in_cam = torch.matmul(homogemous_points_world, w2c)
+        depth = torch.sqrt(torch.sum(point_in_cam**2,1))
+        depth = depth.unsqueeze(1).repeat(1,3)
+
+        bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+        depth_estimation = render(viewpoint_cam, gaussians, pipe, background, override_color=depth)["render"].permute(1,2,0)
+        depth_gt = viewpoint_cam.depth_image.cuda()
+        depth_ = (depth_estimation - depth_estimation.min()) / (depth_estimation.max() - depth_estimation.min())
+
+
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         # Normal loss
-        loss += l1_loss(normals, gt_normals)
+        # loss += l1_loss(normals, gt_normals)
+        # Depth loss
+        # loss += l1_loss(depth_.permute(2,0,1), depth_gt)
         # Force one scale to be small
-        loss += torch.sum(torch.min(gaussians.get_scaling, dim=1)[0])
+        # loss += torch.sum(torch.min(gaussians.get_scaling, dim=1)[0])
         loss.backward()
 
         iter_end.record()
@@ -174,11 +193,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+                    gaussians.static_envmap()
 
             # Optimizer step
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
+
+                w = gaussian_data[...,0]
+                w = torch.clamp(w ,0 ,1)
+                gaussian_data[...,0] = w
+                
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))

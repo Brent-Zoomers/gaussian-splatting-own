@@ -14,14 +14,15 @@ def calculate_colors(gaussian_data, normal_data, envmap_data):
     Apply all Gs to all Ns
     """
     g_a = gaussian_data[...,0].unsqueeze(1)
-
+    g_l = torch.exp(gaussian_data[...,1].unsqueeze(1))
+    g_m = normal_data.unsqueeze(1).repeat(1,3,1).unsqueeze(1)
     # g_a = g_l / (2 * torch.pi * (1.0 - torch.exp(-2*g_l)))
 
     em_a = envmap_data[...,3]
-    g_l = gaussian_data[...,1].unsqueeze(1)
-    em_l = envmap_data[...,4]
-    g_m = normal_data.unsqueeze(1).repeat(1,3,1).unsqueeze(1)
+    em_l = torch.exp(envmap_data[...,4])
     em_m = envmap_data[...,0:3]
+
+    # print(em_a)
 
     # g_a = g_l / (2 * torch.pi * (1.0 - torch.exp(-2*g_l)))
 

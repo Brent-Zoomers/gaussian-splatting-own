@@ -35,6 +35,7 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     normal: np.array
+    depth: np.array
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -103,9 +104,13 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         normal_image_name = os.path.basename(image_path).split(".")[0]
         normal_image = Image.open(normal_image_path)
 
+        depth_image_path = os.path.join(images_folder.replace("images", "depth"), os.path.basename(extr.name).replace("jpg", "png"))
+        depth_image_name = os.path.basename(image_path).split(".")[0]
+        depth_image = Image.open(depth_image_path)
+
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height, normal=normal_image)
+                              image_path=image_path, image_name=image_name, width=width, height=height, normal=normal_image,depth=depth_image)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos

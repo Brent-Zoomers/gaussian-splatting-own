@@ -34,6 +34,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     makedirs(gts_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+        print(view.image_name)
         # start_time = time.time()
         rendering = render(view, gaussians, pipeline, background)["render"]
         # end_time = time.time()
@@ -63,7 +64,10 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         x = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda')
         total_contr = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda')
-        total_occ = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda')
+        total_occ = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda', dtype=torch.long)
+
+        total_contr_lol = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda')
+        total_occ_lol = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda', dtype=torch.long)
 
         xx = torch.zeros((gaussians.get_xyz.shape[0]), device='cuda')
         # Work using score
@@ -72,6 +76,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         ################################## 
         for camera in cameras:
+            # print(camera.image_name)
         #     # Render to camera
             render_pkg = render(camera, gaussians, pipeline, background)
         #     gt_image = camera.original_image.cuda()
@@ -97,16 +102,21 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
             x[y[0]] += y[1]
             xx[most_per_pixel] += 1
 
-            total_contr[ids_per_pixel] += contr_per_pixel
-            total_occ[ids_per_pixel] += 1
 
+            set = torch.unique(ids_per_pixel)
+            total_contr.index_add_(0, ids_per_pixel, contr_per_pixel)
+            total_occ.index_add_(0, set, torch.ones_like(set))
+
+            total_contr_lol[ids_per_pixel] += contr_per_pixel
+            total_occ_lol[ids_per_pixel] += 1
 
         ################################## 
 
         weighted_scale_opacity = -torch.exp(torch.sum(gaussians.get_scaling,dim=1)) / (1 + torch.exp(-gaussians.get_opacity.squeeze()))
 
-        # largest_k_values, largest_k_indices = torch.topk(total_contr*total_occ*gaussians.get_opacity.squeeze(), int(total_contr.shape[0]*(am/10.0)), largest=True)
-        largest_k_values, largest_k_indices = torch.topk(weighted_scale_opacity, int(gaussians.get_opacity.shape[0]*am/10.0), largest=False)
+        # *total_occ*gaussians.get_opacity.squeeze()
+        largest_k_values, largest_k_indices = torch.topk(total_contr, int(total_contr.shape[0]*(am/10.0)), largest=True)
+        # largest_k_values, largest_k_indices = torch.topk(weighted_scale_opacity, int(gaussians.get_opacity.shape[0]*am/10.0), largest=False)
         # end_time = time.time()
         # execution_time = end_time - start_time
         # print("Execution time:", execution_time, "seconds")
@@ -125,7 +135,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         #
 
         dataset_name = dataset.model_path.split("/")[-1]
-        output_folder_path = f'output/datasets/{dataset_name}_webv/{am}'
+        output_folder_path = f'output/datasets/{dataset_name}ivan/{am}'
         folder_path = f'{output_folder_path}/point_cloud/iteration_30000'
         if not os.path.exists(folder_path):
                 # If the folder does not exist, create it  
@@ -139,14 +149,14 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
 
        
-        # bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
-        # background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-        # if not skip_train:
-        #      render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, am)
+        if not skip_train:
+             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, am)
 
-        # if not skip_test:
-        #      render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, am)
+        if not skip_test:
+             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, am)
 
 
 if __name__ == "__main__":

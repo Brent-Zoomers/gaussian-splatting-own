@@ -162,6 +162,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # loss += l1_loss(depth_.permute(2,0,1), depth_gt)
         # Force one scale to be small
         # loss += torch.sum(torch.min(gaussians.get_scaling, dim=1)[0])
+
+        # Force alpha in envmap to be big
+        # loss += 1 / torch.sum(gaussians._envmap._weights[...,3])
         loss.backward()
 
         iter_end.record()

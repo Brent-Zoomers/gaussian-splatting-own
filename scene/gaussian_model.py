@@ -60,7 +60,7 @@ class GaussianModel:
         self.setup_functions()
 
 
-        self._envmap = EnvMap(num_gaussians=4)
+        self._envmap = EnvMap(num_gaussians=2)
 
     def capture(self):
         return (
@@ -141,7 +141,7 @@ class GaussianModel:
 
         # Alpha, Lambda
         features_diff = torch.zeros((fused_color.shape[0], 3, 2)).float().cuda()
-        features_diff[...,1] = 0.01
+        features_diff[...,1] = -3
         features_diff[...,0] = torch.tensor(np.asarray(pcd.colors)).float().cuda()
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
@@ -171,7 +171,7 @@ class GaussianModel:
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz", "per_gaussian": True},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc", "per_gaussian": True},
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest", "per_gaussian": True},
-            {'params': [self._features_diff], 'lr': training_args.feature_lr, "name": "f_diff", "per_gaussian": True},
+            {'params': [self._features_diff], 'lr': training_args.feature_lr / 20.0, "name": "f_diff", "per_gaussian": True},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity", "per_gaussian": True},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling", "per_gaussian": True},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation", "per_gaussian": True},

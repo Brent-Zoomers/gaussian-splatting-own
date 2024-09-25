@@ -12,6 +12,7 @@ def calculate_colors(gaussian_data, normal_data, envmap_data):
     envmap_data: Gx3x5
 
     Apply all Gs to all Ns
+    GAUSSIAN ALPHAS ARE CLAMPED TO 0-1 IN TRAIN.PY
     """
     g_a = gaussian_data[...,0].unsqueeze(1)
     g_l = torch.exp(gaussian_data[...,1].unsqueeze(1))
